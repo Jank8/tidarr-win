@@ -13,7 +13,7 @@
   "scripts": {
     "app-build": "cd app && npx vite build",
     "api-build": "cd api && npx tsc --project ./tsconfig.json",
-    "dev": "concurrently -n api,front \"node_modules/.bin/tsx --watch ./api/index.ts\" \"npm run front\"",
+    "dev": "concurrently -n api,front \"npm exec -- tsx --watch ./api/index.ts\" \"npm run front\"",
     "front": "cd app && npm exec -- vite dev",
     "prod": "node ./api/dist/index.js"
   },
