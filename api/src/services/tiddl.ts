@@ -57,7 +57,9 @@ function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     // Force tiddl to store auth/config inside CONFIG_PATH/.tiddl/
     HOME: CONFIG_PATH,
     USERPROFILE: CONFIG_PATH,
-    ...extra,
+    // Force Python/rich to use UTF-8 encoding on Windows (fixes UnicodeEncodeError with spinner chars)
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",    ...extra,
   };
 }
 
@@ -122,7 +124,9 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   const child = spawn(TIDDL_BINARY, args, {
     env: tiddlEnv({
       FORCE_COLOR: "1",
-      TERM: "xterm-256color",
+      // TERM=dumb disables rich's animated Live display (progress bar overwrites)
+      // while keeping plain text output for Downloaded/Exists lines
+      TERM: "dumb",
     }),
   });
 
@@ -161,26 +165,16 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
       data.includes("Total downloads") ||
       data.includes("Downloaded")
     ) {
-      // Extract first line and clean it (remove ANSI hyperlinks and extra lines)
       const cleanedLine = extractFirstLineClean(data);
-
-      if (cleanedLine) {
-        // Console log important lines only (for Docker logs)
+      if (cleanedLine && cleanedLine.trim() !== "Downloaded" && cleanedLine.trim() !== "Exists") {
         console.log(cleanedLine);
-        // Replace last Total Progress with important line
-        logs(item.id, cleanedLine, { replaceLast: true, skipConsole: true });
-        // Re-display Total Progress below (will continue updating)
-        if (lastTotalProgress) {
-          logs(item.id, lastTotalProgress, { skipConsole: true });
-        }
+        logs(item.id, cleanedLine, { skipConsole: true });
       }
-
       return;
     }
 
     if (errorLines.length > 0) {
-      logs(item.id, errorLines.join("\n"), { replaceLast: true });
-      logs(item.id, " ");
+      logs(item.id, errorLines.join("\n"));
       return;
     }
 
