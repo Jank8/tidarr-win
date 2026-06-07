@@ -25,3 +25,4 @@ compose.override.yml
 *.tsbuildinfo
 
 
+package-lock.json
