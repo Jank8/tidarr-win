@@ -58,7 +58,7 @@ export async function moveAndClean(id: string): Promise<{
 
   if (!item) return { status: "finished" };
 
-  const itemProcessingPath = path.join(PROCESSING_PATH, item.id);
+  const itemProcessingPath = path.join(PROCESSING_PATH, String(item.id));
   const libraryPath = app.locals.tiddlConfig.download.download_path;
 
   try {
@@ -110,7 +110,7 @@ export async function cleanFolder(
 
   try {
     if (itemId) {
-      const targetPath = path.join(processingPath, itemId);
+      const targetPath = path.join(processingPath, String(itemId));
       if (fs.existsSync(targetPath)) {
         removeRecursive(targetPath);
       }
@@ -154,7 +154,7 @@ export async function replacePathInM3U(
   if (item["type"] !== "playlist" && item["type"] !== "mix") return;
 
   const basePath = process.env.M3U_BASEPATH_FILE?.replaceAll('"', "") || ".";
-  const downloadDir = path.join(PROCESSING_PATH, item.id);
+  const downloadDir = path.join(PROCESSING_PATH, String(item.id));
   const app = getAppInstance();
   const libraryPath = app.locals.tiddlConfig.download.download_path;
 
@@ -244,7 +244,7 @@ export async function setPermissions(
 
 export async function getFolderToScan(itemId: string): Promise<string[]> {
   const foldersToScan: string[] = [];
-  const itemProcessingPath = path.join(PROCESSING_PATH, itemId);
+  const itemProcessingPath = path.join(PROCESSING_PATH, String(itemId));
 
   try {
     if (!fs.existsSync(itemProcessingPath)) {

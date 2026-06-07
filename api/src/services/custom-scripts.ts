@@ -71,7 +71,7 @@ async function runScript(
 export async function executeCustomScript(
   item: ProcessingItemType,
 ): Promise<void> {
-  const itemProcessingPath = path.join(PROCESSING_PATH, item.id);
+  const itemProcessingPath = path.join(PROCESSING_PATH, String(item.id));
 
   return runScript(item, {
     scriptPath: path.join(CONFIG_PATH, "custom-script.sh"),

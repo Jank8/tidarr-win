@@ -2,6 +2,8 @@
 setlocal EnableDelayedExpansion
 title Tidarr - Windows Launcher
 cd /d "%~dp0"
+:: Set UTF-8 code page to handle Unicode output from Python/tiddl
+chcp 65001 >nul
 
 echo.
 echo  _____ ___ ____    _    ____  ____
