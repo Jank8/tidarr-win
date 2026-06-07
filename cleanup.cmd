@@ -83,9 +83,10 @@ echo   Done.
 
 :: ── user data ────────────────────────────────────────────────────────────────
 echo [5] Removing user data...
-if exist "shared"     rmdir /s /q "shared"
-if exist "userfiles"  rmdir /s /q "userfiles"
+if exist "shared"              rmdir /s /q "shared"
+if exist "userfiles\shared"    rmdir /s /q "userfiles\shared"
 echo   Done.
+echo   (music folder kept)
 
 echo.
 echo ----------------------------------------
