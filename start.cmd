@@ -1,13 +1,8 @@
 @echo off
 setlocal EnableDelayedExpansion
+title Tidarr - Windows Launcher
 cd /d "%~dp0"
-title Tidarr
 chcp 65001 >nul
-
-:: Fresh PATH
-for /f "skip=2 tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v PATH') do set "SYSPATH=%%B"
-for /f "skip=2 tokens=2*" %%A in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "USRPATH=%%B"
-set "PATH=!SYSPATH!;!USRPATH!"
 
 echo.
 echo  _____ ___ ____    _    ____  ____
@@ -21,53 +16,56 @@ echo ----------------------------------------
 
 :: ── 1. Node.js ──────────────────────────────────────────────────────────────
 echo [1/4] Checking Node.js...
-node -v >nul 2>&1
+where node >nul 2>&1
 if errorlevel 1 (
-    echo   Installing Node.js...
+    echo   Node.js not found. Installing via winget...
     winget install OpenJS.NodeJS.LTS --silent --accept-source-agreements --accept-package-agreements
-    for /f "skip=2 tokens=2*" %%A in ('reg query "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v PATH') do set "SYSPATH=%%B"
-    set "PATH=!SYSPATH!;!USRPATH!"
+    if errorlevel 1 ( echo   ERROR: Node.js install failed & pause & exit /b 1 )
+    for /f "tokens=*" %%i in ('where node 2^>nul') do set NODE_PATH=%%~dpi
+    set "PATH=!NODE_PATH!;%PATH%"
 )
-for /f %%v in ('node -v 2^>nul') do echo   Node.js %%v OK
+for /f "tokens=*" %%v in ('node -v 2^>nul') do echo   Node.js %%v OK
 
-:: ── 2. Python ───────────────────────────────────────────────────────────────
+:: ── 2. Python + tiddl ───────────────────────────────────────────────────────
 echo [2/4] Checking Python...
-python --version >nul 2>&1
+where python >nul 2>&1
 if errorlevel 1 (
-    echo   Installing Python...
+    echo   Python not found. Installing via winget...
     winget install Python.Python.3.13 --silent --accept-source-agreements --accept-package-agreements
-    for /f "skip=2 tokens=2*" %%A in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "USRPATH=%%B"
-    set "PATH=!SYSPATH!;!USRPATH!"
+    if errorlevel 1 ( echo   ERROR: Python install failed & pause & exit /b 1 )
+    for /f "tokens=*" %%i in ('where python 2^>nul') do set PY_PATH=%%~dpi
+    set "PATH=!PY_PATH!;!PY_PATH!Scripts;%PATH%"
 )
 for /f "tokens=*" %%v in ('python --version 2^>nul') do echo   %%v OK
 
-:: tiddl
 echo   Checking tiddl...
-tiddl --version >nul 2>&1
+where tiddl >nul 2>&1
 if errorlevel 1 (
     echo   Installing tiddl 3.4.3...
-    python -m pip install tiddl==3.4.3 --quiet
-    for /f "skip=2 tokens=2*" %%A in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "USRPATH=%%B"
-    set "PATH=!SYSPATH!;!USRPATH!"
+    pip install tiddl==3.4.3 --quiet
+    if errorlevel 1 ( echo   ERROR: tiddl install failed & pause & exit /b 1 )
+    echo   tiddl 3.4.3 OK
+) else (
+    echo   tiddl OK
 )
-echo   tiddl OK
 
 :: ── 3. ffmpeg ────────────────────────────────────────────────────────────────
 echo [3/4] Checking ffmpeg...
-ffmpeg -version >nul 2>&1
+where ffmpeg >nul 2>&1
 if errorlevel 1 (
-    echo   Installing ffmpeg...
+    echo   ffmpeg not found. Installing via winget...
     winget install Gyan.FFmpeg --silent --accept-source-agreements --accept-package-agreements
-    for /f "skip=2 tokens=2*" %%A in ('reg query "HKCU\Environment" /v PATH 2^>nul') do set "USRPATH=%%B"
-    set "PATH=!SYSPATH!;!USRPATH!"
+    for /f "tokens=*" %%i in ('where ffmpeg 2^>nul') do set FF_PATH=%%~dpi
+    if defined FF_PATH ( set "PATH=!FF_PATH!;%PATH%" & echo   ffmpeg OK ) else ( echo   WARNING: ffmpeg not in PATH )
+) else (
+    echo   ffmpeg OK
 )
-echo   ffmpeg OK
 
 :: ── 4. Node dependencies ─────────────────────────────────────────────────────
 echo [4/4] Checking Node dependencies...
 if not exist "%~dp0node_modules\concurrently" (
     echo   Installing dependencies...
-    npm install
+    call npm install
     if errorlevel 1 ( echo ERROR: npm install failed & pause & exit /b 1 )
 ) else (
     echo   node_modules OK
@@ -82,7 +80,7 @@ echo  API      : http://localhost:8484
 echo ----------------------------------------
 echo.
 
-npm run dev
+call npm run dev
 echo.
 echo Tidarr stopped.
 pause
