@@ -11,8 +11,13 @@ export const ROOT_PATH = IS_WINDOWS
 
 // Shared config/data folder — mirrors the Docker /shared volume on Windows
 export const CONFIG_PATH = IS_WINDOWS
-  ? join(ROOT_PATH, "shared")
+  ? join(ROOT_PATH, "userfiles", "shared")
   : "/shared";
+
+// Music library folder
+export const MUSIC_PATH = IS_WINDOWS
+  ? join(ROOT_PATH, "userfiles", "music")
+  : "/music";
 
 export const PROCESSING_PATH = join(CONFIG_PATH, ".processing");
 export const NZB_DOWNLOAD_PATH = join(CONFIG_PATH, "nzb_downloads");

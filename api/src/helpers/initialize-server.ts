@@ -1,7 +1,7 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-import { CONFIG_PATH, ROOT_PATH } from "../../constants";
+import { CONFIG_PATH, MUSIC_PATH, ROOT_PATH } from "../../constants";
 
 export function initializeFiles(): string {
   const output: string[] = [];
@@ -12,8 +12,9 @@ export function initializeFiles(): string {
 
   output.push("🕖 [TIDARR] Application loading ... ");
 
-  // Ensure shared config dir exists (important on Windows where /shared doesn't exist)
+  // Ensure shared and music dirs exist
   mkdirSync(SHARED_URL, { recursive: true });
+  mkdirSync(MUSIC_PATH, { recursive: true });
 
   try {
     // Create .tiddl directory
@@ -26,7 +27,21 @@ export function initializeFiles(): string {
     const configTomlPath = join(tiddlDir, "config.toml");
     if (!existsSync(configTomlPath)) {
       try {
-        copyFileSync(join(SETTINGS_URL, "config.toml"), configTomlPath);
+        let tomlContent = readFileSync(join(SETTINGS_URL, "config.toml"), "utf-8");
+        // On Windows replace Linux /music paths with actual userfiles\music path
+        if (process.platform === "win32") {
+          // Normalize to forward slashes for TOML (tiddl accepts both)
+          const musicPath = MUSIC_PATH.replace(/\\/g, "/");
+          tomlContent = tomlContent.replace(
+            /^download_path\s*=\s*".*"/m,
+            `download_path = "${musicPath}"`,
+          );
+          tomlContent = tomlContent.replace(
+            /^scan_path\s*=\s*".*"/m,
+            `scan_path = "${musicPath}"`,
+          );
+        }
+        writeFileSync(configTomlPath, tomlContent, "utf-8");
         output.push("✅ [TIDDL] Created config.toml from template");
       } catch (error) {
         output.push(

@@ -64,8 +64,9 @@ if exist "%LOCALAPPDATA%\npm-cache\_npx" rmdir /s /q "%LOCALAPPDATA%\npm-cache\_
 echo   Done.
 
 :: ── shared (all runtime data) ────────────────────────────────────────────────
-echo [5/5] Removing shared data...
-if exist "shared" rmdir /s /q "shared"
+echo [5/5] Removing user data...
+if exist "shared"     rmdir /s /q "shared"
+if exist "userfiles"  rmdir /s /q "userfiles"
 echo   Done.
 
 echo.
