@@ -3,19 +3,17 @@ import { join } from "path";
 
 import { CONFIG_PATH, ROOT_PATH } from "../../constants";
 
-/**
- * Initialize Tidarr configuration files and directories
- * Creates necessary directories and copies template files if they don't exist
- * Replaces the shell script init.sh with native TypeScript
- */
 export function initializeFiles(): string {
   const output: string[] = [];
-  const SETTINGS_URL = join(ROOT_PATH, "docker", "settings");
+  const SETTINGS_URL = join(ROOT_PATH, "settings");
   const PUBLIC_URL = join(ROOT_PATH, "app", "build");
   const DEV_PUBLIC_URL = join(ROOT_PATH, "app", "public");
   const SHARED_URL = CONFIG_PATH;
 
   output.push("🕖 [TIDARR] Application loading ... ");
+
+  // Ensure shared config dir exists (important on Windows where /shared doesn't exist)
+  mkdirSync(SHARED_URL, { recursive: true });
 
   try {
     // Create .tiddl directory
@@ -65,20 +63,31 @@ export function initializeFiles(): string {
       output.push("✅ [BEETS] Log file created");
     }
 
-    // Copy custom.css if it doesn't exist
-    const publicCss =
-      process.env.ENVIRONMENT === "development"
-        ? join(DEV_PUBLIC_URL, "custom.css")
-        : join(PUBLIC_URL, "custom.css");
+    // Resolve the correct public dir depending on environment.
+    // In dev (tsx --watch) app\build doesn't exist yet — fall back to app\public.
+    // In prod (node dist/index.js) app\build exists after vite build.
+    const isDev = process.env.ENVIRONMENT === "development"
+      || !existsSync(PUBLIC_URL);
+    const publicCssSource = isDev
+      ? join(DEV_PUBLIC_URL, "custom.css")
+      : join(PUBLIC_URL, "custom.css");
 
     const customCssPath = join(SHARED_URL, "custom.css");
+
+    // Ensure the parent dir and source CSS file exist
+    mkdirSync(isDev ? DEV_PUBLIC_URL : PUBLIC_URL, { recursive: true });
+    if (!existsSync(publicCssSource)) {
+      writeFileSync(publicCssSource, "");
+    }
+
     if (!existsSync(customCssPath)) {
-      copyFileSync(publicCss, customCssPath);
+      copyFileSync(publicCssSource, customCssPath);
       output.push("✅ [CSS] Custom style file created");
     }
 
+    // Sync shared custom.css back to the public dir (non-fatal)
     try {
-      copyFileSync(customCssPath, publicCss);
+      copyFileSync(customCssPath, publicCssSource);
       output.push("✅ [CSS] Load custom styles");
     } catch {
       output.push("⚠️ [CSS] Could not load custom styles");

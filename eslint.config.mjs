@@ -1,5 +1,4 @@
 import js from "@eslint/js";
-import jsxA11Y from "eslint-plugin-jsx-a11y";
 import eslintPluginPrettierRecommended from "eslint-plugin-prettier/recommended";
 import reactHooksEslint from "eslint-plugin-react-hooks";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
@@ -29,7 +28,6 @@ export default tseslint.config(
     },
     plugins: {
       "react-hooks": reactHooksEslint,
-      "jsx-a11y": jsxA11Y,
       "simple-import-sort": simpleImportSort,
     },
     rules: {

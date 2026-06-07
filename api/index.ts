@@ -133,9 +133,10 @@ const server = app.listen(port, async () => {
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM", app, server));
 process.on("SIGINT", () => gracefulShutdown("SIGINT", app, server));
 
-// fallback load app
+// fallback load app (prod mode: serve built frontend)
 
-const frontendFiles = "/tidarr/app/build";
+import { ROOT_PATH } from "./constants";
+const frontendFiles = path.join(ROOT_PATH, "app", "build");
 if (fs.existsSync(frontendFiles)) {
   app.use(express.static(frontendFiles));
   app.get("/{*any}", (_, res) => {

@@ -24,6 +24,21 @@ const FAVORITE_TYPE_TO_RESOURCE: Record<string, string> = {
   favorite_artists: "artist",
 };
 
+/**
+ * Build the env for tiddl spawns.
+ * On Windows tiddl uses HOME (or USERPROFILE) to locate ~/.tiddl/
+ * We point it at CONFIG_PATH so tidarr and tiddl share the same directory.
+ */
+function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    // Force tiddl to store auth/config inside CONFIG_PATH/.tiddl/
+    HOME: CONFIG_PATH,
+    USERPROFILE: CONFIG_PATH,
+    ...extra,
+  };
+}
+
 export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   const item: ProcessingItemType =
     app.locals.processingStack.actions.getItem(id);
@@ -83,11 +98,10 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   logs(item.id, "\r\n");
 
   const child = spawn(TIDDL_BINARY, args, {
-    env: {
-      ...process.env,
+    env: tiddlEnv({
       FORCE_COLOR: "1",
       TERM: "xterm-256color",
-    },
+    }),
   });
 
   child.stdout?.setEncoding("utf8");
@@ -216,7 +230,7 @@ export function tidalToken(req: Request, res: Response) {
   // User explicitly requested login, so proceed with authentication
   // (No need to check existing token - user wants to re-authenticate)
   const tiddlProcess = spawn(TIDDL_BINARY, ["auth", "login"], {
-    env: { ...process.env },
+    env: tiddlEnv(),
   });
 
   tiddlProcess.stdout.on("data", (data) => {
@@ -255,7 +269,7 @@ export function tidalToken(req: Request, res: Response) {
 export function deleteTiddlConfig() {
   try {
     const result = spawnSync(TIDDL_BINARY, ["auth", "logout", "--force"], {
-      env: { ...process.env },
+      env: tiddlEnv(),
       encoding: "utf-8",
     });
     if (result.status === 0) {
@@ -279,9 +293,7 @@ export async function refreshTidalToken(): Promise<void> {
   // Use async spawn and wait for completion
   return new Promise((resolve) => {
     const refreshProcess = spawn(TIDDL_BINARY, ["auth", "refresh"], {
-      env: {
-        ...process.env,
-      },
+      env: tiddlEnv(),
     });
 
     const stderrChunks: Buffer[] = [];
