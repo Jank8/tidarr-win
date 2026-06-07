@@ -3,6 +3,13 @@ setlocal EnableDelayedExpansion
 title Tidarr - Tools
 cd /d "%~dp0"
 
+:: Elevate to admin if needed (required for PATH cleanup in registry)
+net session >nul 2>&1
+if errorlevel 1 (
+    powershell -Command "Start-Process cmd -ArgumentList '/c cd /d ""%~dp0"" && ""%~f0""' -Verb RunAs"
+    exit /b
+)
+
 echo.
 echo  Tidarr Tools
 echo ----------------------------------------

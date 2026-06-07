@@ -102,4 +102,7 @@ Write-Host " API      : http://localhost:8484"
 Write-Host "----------------------------------------"
 Write-Host ""
 
+# Open browser before starting server - modern browsers will auto-reload
+Start-Process "http://localhost:3000"
+
 Run-Npm "run dev"
