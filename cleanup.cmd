@@ -26,6 +26,15 @@ if /i not "!CONFIRM!"=="y" (
 
 echo.
 
+:: ── Kill running Tidarr processes ────────────────────────────────────────────
+echo [0/5] Stopping running processes...
+taskkill /f /im node.exe >nul 2>&1
+taskkill /f /im tsx.exe >nul 2>&1
+taskkill /f /im tiddl.exe >nul 2>&1
+:: Give OS a moment to release file handles
+timeout /t 2 /nobreak >nul
+echo   Done.
+
 :: ── node_modules ─────────────────────────────────────────────────────────────
 echo [1/5] Removing node_modules...
 if exist "node_modules"       rmdir /s /q "node_modules"

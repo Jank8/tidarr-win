@@ -57,14 +57,10 @@ if errorlevel 1 (
         echo   ERROR: Could not install tiddl. Make sure Python and pip are working.
         pause & exit /b 1
     )
+    echo   tiddl 3.4.3 installed OK
 ) else (
-    for /f "tokens=*" %%v in ('tiddl --version 2^>nul') do set TIDDL_VER=%%v
-    if not "!TIDDL_VER!"=="3.4.3" (
-        echo   Wrong version (!TIDDL_VER!), upgrading to 3.4.3...
-        pip install tiddl==3.4.3 --quiet --force-reinstall
-    )
+    echo   tiddl OK
 )
-echo   tiddl 3.4.3 OK
 
 :: ── 4. ffmpeg ────────────────────────────────────────────────────────────────
 echo [3/4] Checking ffmpeg...
@@ -84,10 +80,10 @@ if errorlevel 1 (
     echo   ffmpeg OK
 )
 
-:: ── 5. Node dependencies ─────────────────────────────────────────────────────
+:: ── Node dependencies ───────────────────────────────────────────────────────
 echo [4/4] Checking Node dependencies...
-if not exist "node_modules" (
-    echo   node_modules not found - running: npm install
+if not exist "node_modules\concurrently" (
+    echo   Installing dependencies...
     call npm install
     if errorlevel 1 (
         echo   ERROR: npm install failed.
@@ -96,7 +92,6 @@ if not exist "node_modules" (
 ) else (
     echo   node_modules OK
 )
-
 :: ── Start ────────────────────────────────────────────────────────────────────
 echo.
 echo ----------------------------------------

@@ -3,8 +3,7 @@
   "private": true,
   "workspaces": [
     "api",
-    "app",
-    "e2e"
+    "app"
   ],
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -23,12 +22,11 @@
   "scripts": {
     "app-build": "cd app && npx vite build",
     "api-build": "cd api && npx tsc --project ./tsconfig.json",
-    "dev": "concurrently -n api,front \"npx tsx --watch ./api/index.ts\" \"npm run front\"",
-    "front": "cd app && npx vite dev",
+    "dev": "concurrently -n api,front \"node_modules/.bin/tsx --watch ./api/index.ts\" \"npm run front\"",
+    "front": "cd app && npm exec -- vite dev",
     "prod": "node ./api/dist/index.js",
     "eslint": "eslint .",
-    "eslint-fix": "eslint --fix .",
-    "find-deadcode": "ts-prune | (! grep -v 'used in module')"
+    "eslint-fix": "eslint --fix ."
   },
   "resolutions": {
     "minimatch": ">=10.2.3",
