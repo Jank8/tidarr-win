@@ -28,10 +28,32 @@ const FAVORITE_TYPE_TO_RESOURCE: Record<string, string> = {
  * Build the env for tiddl spawns.
  * On Windows tiddl uses HOME (or USERPROFILE) to locate ~/.tiddl/
  * We point it at CONFIG_PATH so tidarr and tiddl share the same directory.
+ * We also ensure the full system+user PATH is available so ffmpeg is found.
  */
 function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  // On Windows, merge Machine + User PATH to ensure ffmpeg and other tools are found
+  // even when Node.js was started from a CMD session with incomplete PATH
+  let resolvedPath = process.env.PATH || "";
+  if (process.platform === "win32") {
+    try {
+      const { execSync } = require("child_process");
+      const machinePath = execSync(
+        'reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v PATH',
+        { encoding: "utf-8" }
+      ).match(/PATH\s+REG_\w+\s+(.*)/)?.[1]?.trim() || "";
+      const userPath = execSync(
+        'reg query "HKCU\\Environment" /v PATH',
+        { encoding: "utf-8" }
+      ).match(/PATH\s+REG_\w+\s+(.*)/)?.[1]?.trim() || "";
+      resolvedPath = `${machinePath};${userPath};${resolvedPath}`;
+    } catch {
+      // fallback to current PATH
+    }
+  }
+
   return {
     ...process.env,
+    PATH: resolvedPath,
     // Force tiddl to store auth/config inside CONFIG_PATH/.tiddl/
     HOME: CONFIG_PATH,
     USERPROFILE: CONFIG_PATH,
