@@ -26,4 +26,6 @@ compose.override.yml
 # typescript
 *.tsbuildinfo
 
+# native Windows run
+/userfiles
 
