@@ -89,7 +89,9 @@ function Get-PythonCandidates {
     } catch {}
 
     foreach ($cmd in @("python", "python3")) {
-        if (Get-Command $cmd -ErrorAction SilentlyContinue) { $candidates.Add($cmd) }
+        $found = Get-Command $cmd -ErrorAction SilentlyContinue
+        # Skip the Microsoft Store alias stub: probing it raises a noisy error.
+        if ($found -and $found.Source -notmatch 'WindowsApps') { $candidates.Add($found.Source) }
     }
 
     # Per-user installs that may not be on PATH yet.
@@ -397,7 +399,7 @@ if ($shHooks -and -not (Get-Command sh -ErrorAction SilentlyContinue)) {
 Write-Host "[4/4] Checking Node dependencies..."
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
     Write-Host "  Installing pnpm..."
-    Run-Cmd "npm install -g pnpm@10"
+    $null = Run-Cmd "npm install -g pnpm@10"
     Refresh-Path
     if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
         Write-Host "  ERROR: pnpm not found after install." -ForegroundColor Red
@@ -410,7 +412,7 @@ Write-Host "  pnpm $(pnpm -v) OK" -ForegroundColor Green
 # Docker image, so without this npx would download it from npm on every launch.
 if (-not (Get-Command tsx -ErrorAction SilentlyContinue)) {
     Write-Host "  Installing tsx..."
-    Run-Cmd "npm install -g tsx"
+    $null = Run-Cmd "npm install -g tsx"
     Refresh-Path
 }
 
@@ -501,4 +503,90 @@ Start-Job -ScriptBlock {
     }
 } -ArgumentList "http://127.0.0.1:8484", "http://localhost:3000" | Out-Null
 
-Run-Cmd "pnpm dev"
+# ── Run + graceful stop ─────────────────────────────────────────────────────
+# Ctrl+C should stop the whole tree (concurrently, tsx, vite) and free the
+# ports instead of leaving orphaned node processes behind.
+function Stop-DevTree {
+    param([int]$ProcessId)
+    if ($ProcessId) {
+        Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
+    # 1. Everything started from this folder (cmd, concurrently, vite).
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $left = Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -in @("node.exe", "tsx.exe", "cmd.exe") -and
+            $_.CommandLine -and $_.CommandLine.Contains($root)
+        }
+        if (-not $left) { break }
+        $left | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 300
+    }
+
+    # 2. The API runs through a globally installed tsx, so its command line has
+    #    no project path. Both ports were verified free before starting, so any
+    #    listener now belongs to this run.
+    foreach ($port in @(3000, 8484)) {
+        $listeners = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
+        foreach ($listener in $listeners) {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+            if ($owner -and $owner.Name -eq "node.exe") {
+                Stop-Process -Id $listener.OwningProcess -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # 3. tsx --watch would restart the API after its child dies; stop the watcher.
+    Get-CimInstance Win32_Process | Where-Object {
+        $_.Name -eq "node.exe" -and
+        $_.CommandLine -and
+        $_.CommandLine.Contains("tsx") -and
+        $_.CommandLine.Contains("index.ts")
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        if (-not (Get-NetTCPConnection -State Listen -LocalPort 3000, 8484 -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 250
+    }
+}
+
+Write-Host " Press Ctrl+C to stop Tidarr."
+$devProcess = Start-Process -FilePath "cmd.exe" `
+    -ArgumentList "/c cd /d `"$root`" && pnpm dev" `
+    -NoNewWindow -PassThru
+
+# Swallow the first Ctrl+C so the shutdown can finish cleanly: kill the tree,
+# then let Wait-Process return and the finally block confirm the ports.
+$shutdownState = [hashtable]::Synchronized(@{ Root = $root; Stopping = $false })
+try {
+    Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -MessageData $shutdownState -Action {
+        $state = $Event.MessageData
+        if ($state.Stopping) { return }
+        $state.Stopping = $true
+        $Event.SourceEventArgs.Cancel = $true
+        Get-CimInstance Win32_Process | Where-Object {
+            $_.Name -in @("node.exe", "tsx.exe", "cmd.exe") -and
+            $_.CommandLine -and $_.CommandLine.Contains($state.Root)
+        } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } | Out-Null
+} catch {
+    # No console attached (e.g. run from a service): rely on the finally block.
+}
+
+try {
+    Wait-Process -Id $devProcess.Id -ErrorAction SilentlyContinue
+} finally {
+    Write-Host ""
+    Write-Host " Stopping Tidarr..." -ForegroundColor Yellow
+    Stop-DevTree -ProcessId $devProcess.Id
+
+    $busy = Get-NetTCPConnection -State Listen -LocalPort 3000, 8484 -ErrorAction SilentlyContinue
+    if ($busy) {
+        $ports = ($busy | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join ", "
+        Write-Host " WARNING: port(s) $ports are still in use." -ForegroundColor Yellow
+        Write-Host " Run cleanup.cmd if the process does not exit on its own." -ForegroundColor Yellow
+    } else {
+        Write-Host " Tidarr stopped - ports 3000 and 8484 are free." -ForegroundColor Green
+    }
+    Write-Host ""
+}

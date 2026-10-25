@@ -73,6 +73,9 @@ whole network. To allow another machine (e.g. Lidarr) to reach Tidarr, set
 The launcher checks both ports before starting: a leftover Tidarr instance from
 this folder is stopped automatically, anything else is reported with its PID.
 
+Press **Ctrl+C** in the launcher window to stop Tidarr: the UI, the API and the
+background workers are closed and both ports are released.
+
 ## Cleanup and uninstall
 
 ```
