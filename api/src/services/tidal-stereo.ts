@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 import { PROCESSING_PATH, TIDAL_API_URL } from "../../constants";
 import {
@@ -28,9 +28,12 @@ import { logs } from "../processing/utils/logs";
  *             here, so both files end up side by side.
  * - `only`  – nothing to do, stereo is not wanted.
  *
- * Stereo companions keep tiddl's naming with a ` (Stereo)` suffix before the
- * extension, and the Atmos file tiddl downloaded is renamed with an ` (Atmos)`
- * suffix, so both presentations are recognisable and never collide.
+ * Stereo companions keep tiddl's plain file name (they are the copy a library
+ * scanner should treat as the track), while the Atmos file tiddl downloaded is
+ * renamed with an ` (Atmos)` suffix before the extension. Both presentations
+ * are therefore recognisable and can never collide — the only case that would
+ * need a marker on the stereo copy is a library with further presentations
+ * (5.1, 7.1), which Tidal does not expose here.
  */
 
 const STEREO_SUFFIX = " (Stereo)";
@@ -141,11 +144,7 @@ function parseManifest(stream: TrackStreamJson): {
   return { urls: manifest.urls ?? [], codecs: manifest.codecs ?? "" };
 }
 
-async function downloadStream(stream: TrackStreamJson): Promise<{
-  buffer: Buffer;
-  extension: string;
-}> {
-  const { urls, codecs } = parseManifest(stream);
+async function downloadUrls(urls: string[]): Promise<Buffer> {
   if (urls.length === 0) throw new Error("empty stream manifest");
 
   const chunks: Buffer[] = [];
@@ -157,10 +156,7 @@ async function downloadStream(stream: TrackStreamJson): Promise<{
     chunks.push(Buffer.from(await response.arrayBuffer()));
   }
 
-  return {
-    buffer: Buffer.concat(chunks),
-    extension: extensionFor(stream, codecs),
-  };
+  return Buffer.concat(chunks);
 }
 
 async function getTrackStream(
@@ -393,14 +389,29 @@ export async function ensureStereoCompanions(
       const stereo = await getTrackStream(track.id, quality, false);
 
       if (stereo?.audioMode === "STEREO") {
-        const { buffer, extension } = await downloadStream(stereo);
-        const file = `${base}${STEREO_SUFFIX}${extension}`;
+        const { urls, codecs } = parseManifest(stereo);
+        const extension = extensionFor(stereo, codecs);
+        // The stereo copy keeps the plain track name: it is the one a library
+        // scanner should treat as the track, the Atmos file carries the marker
+        const file = `${base}${extension}`;
 
         if (existsSync(file)) {
           logs(item.id, `✅ [ATMOS] ${track.title}: stereo already present`);
           continue;
         }
 
+        // Files written by 1.1.6 and older had a ` (Stereo)` suffix
+        const legacy = `${base}${STEREO_SUFFIX}${extension}`;
+        if (existsSync(legacy)) {
+          renameSync(legacy, file);
+          logs(
+            item.id,
+            `✅ [ATMOS] ${track.title}: stereo file renamed to "${basename(file)}"`,
+          );
+          continue;
+        }
+
+        const buffer = await downloadUrls(urls);
         await writeAudioFile(file, buffer, trackTags(track, album));
         added += 1;
         logs(
@@ -428,7 +439,9 @@ export async function ensureStereoCompanions(
         continue;
       }
 
-      const { buffer, extension } = await downloadStream(atmos);
+      const { urls, codecs } = parseManifest(atmos);
+      const buffer = await downloadUrls(urls);
+      const extension = extensionFor(atmos, codecs);
       const file = `${base}${ATMOS_SUFFIX}${extension}`;
       await writeAudioFile(file, buffer, trackTags(track, album));
 

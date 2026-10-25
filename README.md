@@ -121,12 +121,12 @@ the other one after tiddl finishes. The button in the header picks the mode
 |---|---|
 | **No Atmos** | stereo `.flac` only; tracks Tidal has as Atmos get their stereo downmix, and if no stereo version exists the Atmos `.m4a` is kept instead of skipping the track |
 | **Atmos only** | `.m4a` (eac3) only |
-| **Atmos allowed** | both — `… (Atmos).m4a` and `… (Stereo).flac` next to it |
+| **Atmos allowed** | both — `… (Atmos).m4a` and `….flac` next to it |
 
 Stereo companions are written by Tidarr (tags added with ffmpeg) under tiddl's
-naming with a ` (Stereo)` suffix, and the Atmos file tiddl downloaded is renamed
-with an ` (Atmos)` suffix. Media servers will list both files as two tracks of
-the album.
+plain file name, and the Atmos file tiddl downloaded is renamed with an
+` (Atmos)` suffix. Media servers will list both files as two tracks of the
+album.
 
 ## Optional features
 
