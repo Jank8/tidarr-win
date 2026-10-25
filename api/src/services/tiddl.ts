@@ -135,7 +135,6 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   });
 
   child.stdout?.setEncoding("utf8");
-  let lastTotalProgress = "";
   let hasProcessingError = false;
   let hasNetworkError = false;
   let lastProgressUpdate = 0;
@@ -175,8 +174,6 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
     }
 
     if (data.includes("Total Progress")) {
-      lastTotalProgress = data;
-
       // Parse progress (e.g., "47/210") and update item (throttled)
       const match = data.match(/(\d+)\/(\d+)/);
       const now = Date.now();
