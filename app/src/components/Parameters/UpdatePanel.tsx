@@ -18,8 +18,8 @@ export default function UpdatePanel() {
             <strong>Update available: {releaseData?.name}</strong>
           </Paper>
           <p>
-            To update, close this window, extract the new version over the
-            current folder and run :
+            To update, close this window, run <code>git pull</code> in the
+            Tidarr folder and start it again with :
           </p>
           <Paper sx={{ p: 2 }}>
             <code>start.cmd</code>
