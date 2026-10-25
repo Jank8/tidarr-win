@@ -1,15 +1,12 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-import { CONFIG_PATH, IS_WINDOWS, MUSIC_PATH, ROOT_PATH } from "../../constants";
+import { CONFIG_PATH, MUSIC_PATH, ROOT_PATH } from "../../constants";
 
 export function initializeFiles(): string {
   const output: string[] = [];
-  // Native Windows runs ship a top-level settings/ folder; the Docker image
-  // keeps its templates in docker/settings/ as upstream does.
-  const SETTINGS_URL = IS_WINDOWS
-    ? join(ROOT_PATH, "settings")
-    : join(ROOT_PATH, "docker", "settings");
+  // Config templates ship in the top-level settings/ folder.
+  const SETTINGS_URL = join(ROOT_PATH, "settings");
   const PUBLIC_URL = join(ROOT_PATH, "app", "build");
   const DEV_PUBLIC_URL = join(ROOT_PATH, "app", "public");
   const SHARED_URL = CONFIG_PATH;

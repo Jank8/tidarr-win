@@ -152,7 +152,7 @@ export const createSyncCronJob = async (app: Express) => {
   cron.getTasks().forEach((task) => task.stop());
 
   // Validate and sanitize cron expression
-  // Remove surrounding quotes if present (from Docker env vars like SYNC_CRON_EXPRESSION="* * * * *")
+  // Remove surrounding quotes if present (SYNC_CRON_EXPRESSION="* * * * *")
   const rawExpression = process.env.SYNC_CRON_EXPRESSION || SYNC_DEFAULT_CRON;
   const cronExpression = rawExpression.trim().replace(/^["']|["']$/g, "");
   const isValid = cron.validate(cronExpression);

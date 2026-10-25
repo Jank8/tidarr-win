@@ -1,23 +1,13 @@
 import { join } from "path";
 
-// On Windows (native), use paths relative to the project root.
-// On Linux/Docker, use the original /tidarr and /shared layout.
-export const IS_WINDOWS = process.platform === "win32";
+// Native Windows layout: everything lives inside the project folder.
+export const ROOT_PATH = join(__dirname, "..");
 
-// Root of the tidarr project (one level up from /api)
-export const ROOT_PATH = IS_WINDOWS
-  ? join(__dirname, "..")
-  : "/tidarr";
-
-// Shared config/data folder — mirrors the Docker /shared volume on Windows
-export const CONFIG_PATH = IS_WINDOWS
-  ? join(ROOT_PATH, "userfiles", "shared")
-  : "/shared";
+// Config, auth tokens and queue
+export const CONFIG_PATH = join(ROOT_PATH, "userfiles", "shared");
 
 // Music library folder
-export const MUSIC_PATH = IS_WINDOWS
-  ? join(ROOT_PATH, "userfiles", "music")
-  : "/music";
+export const MUSIC_PATH = join(ROOT_PATH, "userfiles", "music");
 
 export const PROCESSING_PATH = join(CONFIG_PATH, ".processing");
 export const NZB_DOWNLOAD_PATH = join(CONFIG_PATH, "nzb_downloads");
