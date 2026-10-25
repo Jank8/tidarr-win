@@ -1,21 +1,24 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
-import { CONFIG_PATH, ROOT_PATH } from "../../constants";
+import { CONFIG_PATH, IS_WINDOWS, MUSIC_PATH, ROOT_PATH } from "../../constants";
 
-/**
- * Initialize Tidarr configuration files and directories
- * Creates necessary directories and copies template files if they don't exist
- * Replaces the shell script init.sh with native TypeScript
- */
 export function initializeFiles(): string {
   const output: string[] = [];
-  const SETTINGS_URL = join(ROOT_PATH, "docker", "settings");
+  // Native Windows runs ship a top-level settings/ folder; the Docker image
+  // keeps its templates in docker/settings/ as upstream does.
+  const SETTINGS_URL = IS_WINDOWS
+    ? join(ROOT_PATH, "settings")
+    : join(ROOT_PATH, "docker", "settings");
   const PUBLIC_URL = join(ROOT_PATH, "app", "build");
   const DEV_PUBLIC_URL = join(ROOT_PATH, "app", "public");
   const SHARED_URL = CONFIG_PATH;
 
   output.push("🕖 [TIDARR] Application loading ... ");
+
+  // Ensure shared and music dirs exist
+  mkdirSync(SHARED_URL, { recursive: true });
+  mkdirSync(MUSIC_PATH, { recursive: true });
 
   try {
     // Create .tiddl directory
@@ -28,7 +31,21 @@ export function initializeFiles(): string {
     const configTomlPath = join(tiddlDir, "config.toml");
     if (!existsSync(configTomlPath)) {
       try {
-        copyFileSync(join(SETTINGS_URL, "config.toml"), configTomlPath);
+        let tomlContent = readFileSync(join(SETTINGS_URL, "config.toml"), "utf-8");
+        // On Windows replace Linux /music paths with actual userfiles\music path
+        if (process.platform === "win32") {
+          // Normalize to forward slashes for TOML (tiddl accepts both)
+          const musicPath = MUSIC_PATH.replace(/\\/g, "/");
+          tomlContent = tomlContent.replace(
+            /^download_path\s*=\s*".*"/m,
+            `download_path = "${musicPath}"`,
+          );
+          tomlContent = tomlContent.replace(
+            /^scan_path\s*=\s*".*"/m,
+            `scan_path = "${musicPath}"`,
+          );
+        }
+        writeFileSync(configTomlPath, tomlContent, "utf-8");
         output.push("✅ [TIDDL] Created config.toml from template");
       } catch (error) {
         output.push(
@@ -65,20 +82,31 @@ export function initializeFiles(): string {
       output.push("✅ [BEETS] Log file created");
     }
 
-    // Copy custom.css if it doesn't exist
-    const publicCss =
-      process.env.ENVIRONMENT === "development"
-        ? join(DEV_PUBLIC_URL, "custom.css")
-        : join(PUBLIC_URL, "custom.css");
+    // Resolve the correct public dir depending on environment.
+    // In dev (tsx --watch) app\build doesn't exist yet — fall back to app\public.
+    // In prod (node dist/index.js) app\build exists after vite build.
+    const isDev = process.env.ENVIRONMENT === "development"
+      || !existsSync(PUBLIC_URL);
+    const publicCssSource = isDev
+      ? join(DEV_PUBLIC_URL, "custom.css")
+      : join(PUBLIC_URL, "custom.css");
 
     const customCssPath = join(SHARED_URL, "custom.css");
+
+    // Ensure the parent dir and source CSS file exist
+    mkdirSync(isDev ? DEV_PUBLIC_URL : PUBLIC_URL, { recursive: true });
+    if (!existsSync(publicCssSource)) {
+      writeFileSync(publicCssSource, "");
+    }
+
     if (!existsSync(customCssPath)) {
-      copyFileSync(publicCss, customCssPath);
+      copyFileSync(publicCssSource, customCssPath);
       output.push("✅ [CSS] Custom style file created");
     }
 
+    // Sync shared custom.css back to the public dir (non-fatal)
     try {
-      copyFileSync(customCssPath, publicCss);
+      copyFileSync(customCssPath, publicCssSource);
       output.push("✅ [CSS] Load custom styles");
     } catch {
       output.push("⚠️ [CSS] Could not load custom styles");
