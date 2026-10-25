@@ -25,13 +25,15 @@ export async function applyReplayGain(
   return new Promise((resolve) => {
     try {
       // Run rsgain easy mode (automatically handles album mode with recursive scan)
-      const rsgainProcess = spawn(
-        "rsgain",
-        ["easy", "-S", "-m", "4", folderPath],
-        {
-          shell: "/bin/sh",
-        },
-      );
+      // rsgain is a plain executable and spawn resolves it from PATH on every
+      // platform — going through /bin/sh broke this on native Windows.
+      const rsgainProcess = spawn("rsgain", [
+        "easy",
+        "-S",
+        "-m",
+        "4",
+        folderPath,
+      ]);
 
       let errorOutput = "";
 
