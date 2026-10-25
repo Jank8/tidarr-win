@@ -136,6 +136,8 @@ function Remove-FromPath([string]$Entry) {
 
 function Remove-WingetPackage([string]$Id, [string]$Label) {
     $output = & winget uninstall --id $Id --silent --accept-source-agreements 2>&1
+    # 0x8A150014: no installed package matches the criteria - already removed.
+    if ($LASTEXITCODE -eq -1978335212) { return }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "      WARNING: could not uninstall $Label ($Id), exit $LASTEXITCODE" -ForegroundColor Yellow
         $output | Select-Object -Last 2 | ForEach-Object { Write-Host "        $_" }
@@ -195,8 +197,25 @@ function Remove-SystemDependencies {
 }
 
 function Invoke-Uninstall {
+    $machinePath = [Environment]::GetEnvironmentVariable("PATH", "Machine")
+    $adminWork = (Test-Path "C:\Program Files\nodejs") -or ($machinePath -match "nodejs|Python3\d\d")
+    $userWork = (Test-Path (Join-Path $root "node_modules")) -or
+        (Test-Path (Join-Path $root "tools")) -or
+        [bool](Get-Command node -ErrorAction SilentlyContinue) -or
+        [bool](Get-Command tiddl -ErrorAction SilentlyContinue) -or
+        [bool](Get-Command ffmpeg -ErrorAction SilentlyContinue) -or
+        [bool](Get-Command pnpm -ErrorAction SilentlyContinue) -or
+        [bool](Get-Command tsx -ErrorAction SilentlyContinue) -or
+        ((Get-RemovablePythons).Count -gt 0)
+
     Write-Host " Tidarr - Uninstall dependencies"
     Write-Host " ----------------------------------------"
+    if (-not $userWork -and -not $adminWork) {
+        Write-Host " Nothing to uninstall - this environment is already clean."
+        Write-Host " (Python versions older than 3.13 and userfiles\ are never removed.)"
+        Write-Host " ----------------------------------------"
+        return
+    }
     Write-Host " This removes: Node.js, Python 3.13+, tiddl + beets, ffmpeg,"
     Write-Host " pnpm/tsx, rsgain, tools\, node_modules and the PATH entries added"
     Write-Host " for them. Older Python versions and your music files are NOT"
@@ -207,9 +226,16 @@ function Invoke-Uninstall {
         if ($confirm -notmatch "^y") { Write-Host "Cancelled."; return }
     }
 
-    Remove-UserDependencies
+    if ($userWork) {
+        Remove-UserDependencies
+    } else {
+        Write-Host "[1/2] Nothing to remove in this folder."
+    }
 
-    if (Test-Admin) {
+    if (-not $adminWork) {
+        Write-Host ""
+        Write-Host " No administrator steps needed - nothing is left on the machine PATH."
+    } elseif (Test-Admin) {
         Remove-SystemDependencies
     } else {
         Write-Host ""
@@ -222,7 +248,7 @@ function Invoke-Uninstall {
 
     Write-Host ""
     Write-Host " ----------------------------------------"
-    Write-Host " User-scope uninstall complete."
+    Write-Host " Uninstall complete."
     Write-Host " ----------------------------------------"
     Write-Host ""
 }
