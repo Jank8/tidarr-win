@@ -1,3 +1,9 @@
 packages:
   - api
   - app
+
+# pnpm 10 does not run dependency install scripts unless they are approved here
+# (otherwise every `pnpm install` prints "Ignored build scripts: esbuild@...").
+# esbuild's postinstall links its native binary, so it has to be allowed.
+onlyBuiltDependencies:
+  - esbuild
