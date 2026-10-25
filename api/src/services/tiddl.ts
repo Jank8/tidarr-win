@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "child_process";
 import { Express, Request, Response } from "express";
+import { join } from "path";
 
 import {
   CONFIG_PATH,
@@ -28,8 +29,18 @@ const FAVORITE_TYPE_TO_RESOURCE: Record<string, string> = {
 
 /**
  * Build the env for tiddl spawns.
- * On Windows tiddl uses HOME (or USERPROFILE) to locate ~/.tiddl/
- * We point it at CONFIG_PATH so tidarr and tiddl share the same directory.
+ *
+ * tiddl keeps its state (config.toml, auth.json, latest.log, cache) in its "app
+ * path": $TIDDL_PATH when set, otherwise ~/.tiddl. TIDDL_PATH is pointed at
+ * CONFIG_PATH/.tiddl so tidarr and tiddl share the same directory.
+ *
+ * Never do that by overriding HOME/USERPROFILE instead: `tiddl auth login`
+ * launches the browser with the login page and the browser inherits this
+ * environment. On Windows the browser resolves its profile folder from
+ * %USERPROFILE%\AppData\Roaming, so the fake profile made it start a brand new
+ * browser profile (empty, not signed in to Tidal) next to the one the user
+ * actually uses.
+ *
  * We also ensure the full system+user PATH is available so ffmpeg is found.
  */
 function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -57,11 +68,11 @@ function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     ...process.env,
     PATH: resolvedPath,
     // Force tiddl to store auth/config inside CONFIG_PATH/.tiddl/
-    HOME: CONFIG_PATH,
-    USERPROFILE: CONFIG_PATH,
+    TIDDL_PATH: join(CONFIG_PATH, ".tiddl"),
     // Force Python/rich to use UTF-8 encoding on Windows (fixes UnicodeEncodeError with spinner chars)
     PYTHONIOENCODING: "utf-8",
-    PYTHONUTF8: "1",    ...extra,
+    PYTHONUTF8: "1",
+    ...extra,
   };
 }
 
