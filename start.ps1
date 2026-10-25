@@ -193,6 +193,14 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 }
 Write-Host "  pnpm $(pnpm -v) OK" -ForegroundColor Green
 
+# The API's start script runs `npx tsx`; upstream provides tsx globally in the
+# Docker image, so without this npx would download it from npm on every launch.
+if (-not (Get-Command tsx -ErrorAction SilentlyContinue)) {
+    Write-Host "  Installing tsx..."
+    Run-Cmd "npm install -g tsx"
+    Refresh-Path
+}
+
 $pnpmStore = Join-Path $root "node_modules\.pnpm"
 if (-not (Test-Path $pnpmStore)) {
     Write-Host "  Installing dependencies (first run, may take a few minutes)..."
