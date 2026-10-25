@@ -11,8 +11,15 @@ Nothing to install by hand — the launcher checks and installs what is missing:
 
 - [Node.js](https://nodejs.org) (LTS)
 - [pnpm](https://pnpm.io) 10
-- [Python 3.13](https://python.org) + tiddl 3.4.4
+- [tiddl](https://github.com/oskvr37/tiddl) — always the latest release from
+  PyPI (currently 3.4.4), plus the Python version that release requires
+  (currently Python 3.13+)
 - [ffmpeg](https://ffmpeg.org)
+
+At every start the launcher asks PyPI for the current tiddl release, reads the
+Python requirement published with it and installs both if needed. If PyPI cannot
+be reached, it falls back to a known-good version and keeps working offline.
+Set `TIDARR_TIDDL_VERSION` to pin a specific tiddl version.
 
 An internet connection is required on the first run.
 
@@ -78,12 +85,14 @@ uninstall.cmd   → removes Node.js, Python, tiddl, ffmpeg (music is kept)
 
 ## Troubleshooting
 
-**`ERROR: No matching distribution found for tiddl==3.4.4`**
+**`ERROR: No matching distribution found for tiddl==…`**
 
-tiddl 3.4.4 requires Python 3.13 or newer. If Python 3.12 or older is already
-installed, `python` on your PATH cannot install it. The launcher detects this by
-version, installs Python 3.13 alongside whatever you already have, and runs the
-tiddl install with that interpreter — no uninstall required.
+The tiddl release selected by the launcher requires a newer Python than the one
+`python` on your PATH provides. The launcher resolves the interpreter by version
+(reads `requires_python` from PyPI), installs a matching Python alongside the
+existing one and runs the tiddl install with that interpreter — no uninstall
+required. If it still fails, install Python manually from
+https://www.python.org/downloads/ and run `start.cmd` again.
 
 **The page opens but shows "Tidarr API is not reachable"**
 

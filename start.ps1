@@ -1,5 +1,7 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Always work from the project folder, no matter where the script was started.
+Set-Location $root
 
 function Refresh-Path {
     # Merge the registry PATH with the inherited one, so tools installed after
@@ -45,12 +47,14 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 Write-Host "  Node.js $(node -v) OK" -ForegroundColor Green
 
 # ── 2. Python + tiddl ───────────────────────────────────────────────────────
-# tiddl 3.4.x requires Python >= 3.13. An older "python" on PATH (3.12, 3.11...)
-# cannot install it, so the interpreter is resolved by version, not just presence.
+# The launcher asks PyPI for the current tiddl release, reads the Python version
+# it requires, resolves an interpreter that satisfies it (installing Python if
+# needed) and installs/upgrades tiddl with that interpreter. When PyPI cannot be
+# reached (offline start) it falls back to known-good versions.
 Write-Host "[2/4] Checking Python..."
 
-$MinPython     = [version]"3.13"
-$TiddlVersion  = "3.4.4"
+$FallbackTiddlVersion = "3.4.4"
+$FallbackMinPython    = [version]"3.13"
 
 function Invoke-Py {
     param([string[]]$Python, [string[]]$Arguments)
@@ -61,43 +65,109 @@ function Invoke-Py {
 }
 
 function Get-PythonVersion {
-    param([string[]]$Python)
+    param([string]$Exe)
     try {
-        $out = Invoke-Py $Python @("-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])") 2>$null
+        $out = Invoke-Py @($Exe) @("-c", "import sys;print('%d.%d.%d' % sys.version_info[:3])") 2>$null
         if ($LASTEXITCODE -ne 0 -or -not $out) { return $null }
         return [version]("$out".Trim())
     } catch { return $null }
 }
 
-function Find-CompatiblePython {
-    $candidates = @(
-        @("py", "-3.13"),
-        @("py", "-3"),
-        @("python"),
-        @("python3")
-    )
-    $fallback = Join-Path $env:LOCALAPPDATA "Programs\Python\Python313\python.exe"
-    if (Test-Path $fallback) { $candidates += ,@($fallback) }
+function Get-PythonCandidates {
+    $candidates = New-Object System.Collections.Generic.List[string]
 
-    foreach ($candidate in $candidates) {
-        if ($candidate.Count -eq 1 -and -not (Get-Command $candidate[0] -ErrorAction SilentlyContinue)) { continue }
-        $version = Get-PythonVersion $candidate
-        if ($version -and $version -ge $MinPython) {
-            return @{ Command = $candidate; Version = $version }
+    # Every interpreter registered with the py launcher.
+    try {
+        $lines = & py -0p 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            foreach ($line in $lines) {
+                if ($line -match '-V:\d+\.\d+\s*\*?\s+(.+?)\s*$') {
+                    $candidates.Add($Matches[1].Trim())
+                }
+            }
         }
+    } catch {}
+
+    foreach ($cmd in @("python", "python3")) {
+        if (Get-Command $cmd -ErrorAction SilentlyContinue) { $candidates.Add($cmd) }
     }
-    return $null
+
+    # Per-user installs that may not be on PATH yet.
+    $pythonRoot = Join-Path $env:LOCALAPPDATA "Programs\Python"
+    Get-ChildItem $pythonRoot -Directory -Filter "Python3*" -ErrorAction SilentlyContinue | ForEach-Object {
+        $exe = Join-Path $_.FullName "python.exe"
+        if (Test-Path $exe) { $candidates.Add($exe) }
+    }
+
+    return $candidates | Select-Object -Unique
 }
 
-$py = Find-CompatiblePython
-if (-not $py) {
-    Write-Host "  Python 3.13+ not found. Installing Python 3.13..."
-    winget install Python.Python.3.13 --silent --accept-source-agreements --accept-package-agreements
+function Find-CompatiblePython {
+    param([version]$Minimum)
+    $best = $null
+    foreach ($exe in Get-PythonCandidates) {
+        $version = Get-PythonVersion $exe
+        if ($version -and $version -ge $Minimum) {
+            if (-not $best -or $version -gt $best.Version) {
+                $best = @{ Command = @($exe); Version = $version }
+            }
+        }
+    }
+    return $best
+}
+
+function Install-Python {
+    param([version]$Version)
+    $id = "Python.Python.$($Version.Major).$($Version.Minor)"
+    Write-Host "  Installing Python $($Version.Major).$($Version.Minor)..."
+    winget install $id --silent --accept-source-agreements --accept-package-agreements
     Refresh-Path
-    $py = Find-CompatiblePython
+}
+
+function Get-TiddlRelease {
+    # Latest stable tiddl and the Python requirement it declares, from PyPI.
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $pypi = Invoke-RestMethod -Uri "https://pypi.org/pypi/tiddl/json" -TimeoutSec 8 -UseBasicParsing
+        if (-not $pypi.info.version) { return $null }
+        $minimum = $null
+        if ($pypi.info.requires_python -match '>=\s*(\d+)\.(\d+)') {
+            $minimum = [version]"$($Matches[1]).$($Matches[2])"
+        }
+        return @{ Version = "$($pypi.info.version)"; MinPython = $minimum }
+    } catch {
+        return $null
+    }
+}
+
+# ── which tiddl does the launcher target? ───────────────────────────────────
+$release = Get-TiddlRelease
+if ($env:TIDARR_TIDDL_VERSION) {
+    $TiddlVersion = $env:TIDARR_TIDDL_VERSION
+    $MinPython = if ($release -and $release.MinPython) { $release.MinPython } else { $FallbackMinPython }
+    Write-Host "  tiddl $TiddlVersion requested via TIDARR_TIDDL_VERSION"
+} elseif ($release) {
+    $TiddlVersion = $release.Version
+    $MinPython = if ($release.MinPython -and $release.MinPython -ge $FallbackMinPython) {
+        $release.MinPython
+    } else {
+        $FallbackMinPython
+    }
+    Write-Host "  Latest tiddl: $TiddlVersion (Python $($MinPython.Major).$($MinPython.Minor)+)"
+} else {
+    $TiddlVersion = $FallbackTiddlVersion
+    $MinPython = $FallbackMinPython
+    Write-Host "  PyPI unreachable, using tiddl $TiddlVersion" -ForegroundColor Yellow
+}
+
+# ── interpreter that satisfies tiddl ────────────────────────────────────────
+$py = Find-CompatiblePython -Minimum $MinPython
+if (-not $py) {
+    Install-Python -Version $MinPython
+    $py = Find-CompatiblePython -Minimum $MinPython
     if (-not $py) {
-        Write-Host "  ERROR: Python 3.13+ not found after install." -ForegroundColor Red
-        Write-Host "  tiddl $TiddlVersion requires Python 3.13 or newer." -ForegroundColor Yellow
+        Write-Host "  ERROR: no Python $($MinPython.Major).$($MinPython.Minor)+ found after install." -ForegroundColor Red
+        Write-Host "  Install it from https://www.python.org/downloads/ and run start.cmd again." -ForegroundColor Yellow
         Read-Host "Press Enter to exit"; exit 1
     }
 }
@@ -119,7 +189,19 @@ try {
 
 $needsTiddl = $true
 if ($tiddlInstalled) {
-    try { $needsTiddl = ([version]$tiddlInstalled -lt [version]$TiddlVersion) } catch { $needsTiddl = $true }
+    try {
+        $current = [version]$tiddlInstalled
+        $target = [version]$TiddlVersion
+        if ($current -lt $target) {
+            $needsTiddl = $true
+        } else {
+            $needsTiddl = $false
+            if ($current -gt $target) {
+                Write-Host "  tiddl $tiddlInstalled is newer than $TiddlVersion, keeping it"
+                $TiddlVersion = $tiddlInstalled
+            }
+        }
+    } catch { $needsTiddl = $true }
 }
 
 if ($needsTiddl) {
@@ -154,7 +236,9 @@ if ($expectedTiddl -and (Test-Path $expectedTiddl)) {
     }
 }
 
-Write-Host "  tiddl $tiddlInstalled OK ($scriptsDir\tiddl.exe)" -ForegroundColor Green
+$isLatest = $release -and ($tiddlInstalled -eq $release.Version)
+$latestNote = if ($isLatest) { " (latest)" } else { "" }
+Write-Host "  tiddl $tiddlInstalled$latestNote OK ($scriptsDir\tiddl.exe)" -ForegroundColor Green
 
 $tiddlOk = $false
 if (Get-Command tiddl -ErrorAction SilentlyContinue) {
