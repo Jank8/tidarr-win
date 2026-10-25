@@ -1,4 +1,4 @@
-﻿param([switch]$Uninstall, [switch]$Force)
+﻿param([switch]$Uninstall, [switch]$Force, [switch]$SystemStage)
 
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,6 +12,8 @@ function Update-ProcessPath {
     $env:PATH = ($entries | Where-Object { $_ } | Select-Object -Unique) -join ';'
 }
 Update-ProcessPath
+
+$MinimumPython = [version]"3.13"
 
 function Test-Admin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -66,6 +68,12 @@ function Get-PythonInstallations {
     }
 
     return $installations
+}
+
+function Get-RemovablePythons {
+    return @(Get-PythonInstallations | Where-Object {
+        $_.Version -and ([version]$_.Version -ge $MinimumPython)
+    })
 }
 
 function Show-Dependencies {
@@ -126,6 +134,66 @@ function Remove-FromPath([string]$Entry) {
     }
 }
 
+function Remove-WingetPackage([string]$Id, [string]$Label) {
+    $output = & winget uninstall --id $Id --silent --accept-source-agreements 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "      WARNING: could not uninstall $Label ($Id), exit $LASTEXITCODE" -ForegroundColor Yellow
+        $output | Select-Object -Last 2 | ForEach-Object { Write-Host "        $_" }
+    }
+}
+
+function Remove-UserDependencies {
+    Write-Host "[1/2] Removing tools, project dependencies and Python packages..."
+    Stop-TidarrProcesses
+    foreach ($python in Get-PythonInstallations) {
+        & $python.Path -m pip uninstall -y tiddl beets 2>$null | Out-Null
+    }
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        & npm uninstall -g pnpm tsx 2>$null | Out-Null
+    }
+    foreach ($path in @("tools", "node_modules", "api\node_modules", "app\node_modules", "api\dist", "app\dist")) {
+        Remove-Item (Join-Path $root $path) -Recurse -Force
+    }
+    Write-Host "      Done."
+
+    Write-Host "[2/2] Uninstalling user-scope packages (Python 3.13+, ffmpeg)..."
+    $removable = Get-RemovablePythons
+    $kept = Get-PythonInstallations | Where-Object { $_.Version -and ([version]$_.Version -lt $MinimumPython) }
+    foreach ($python in $kept) {
+        Write-Host "      Keeping Python $($python.Version) ($($python.Path))"
+    }
+    foreach ($python in $removable) {
+        if ($python.Path -match "Python(\d)(\d+)") {
+            Remove-WingetPackage -Id "Python.Python.$($Matches[1]).$($Matches[2])" -Label "Python $($python.Version)"
+        }
+    }
+    Remove-WingetPackage -Id "Gyan.FFmpeg" -Label "ffmpeg"
+    Write-Host "      Done."
+}
+
+function Remove-SystemDependencies {
+    Write-Host "[admin] Uninstalling Node.js..."
+    Remove-WingetPackage -Id "OpenJS.NodeJS.LTS" -Label "Node.js"
+    Write-Host "        Done."
+
+    Write-Host "[admin] Cleaning PATH entries..."
+    $entries = @(
+        (Join-Path $root "tools\rsgain"),
+        (Join-Path $env:APPDATA "npm"),
+        "C:\Program Files\nodejs"
+    )
+    # Only PATH entries of the Python versions that were removed; older
+    # interpreters (and the py launcher they use) stay untouched.
+    foreach ($python in Get-PythonInstallations) {
+        if ($python.Version -and ([version]$python.Version -ge $MinimumPython) -and $python.Path -match "^(.*)\\python\.exe$") {
+            $entries += $Matches[1]
+            $entries += (Join-Path $Matches[1] "Scripts")
+        }
+    }
+    foreach ($entry in $entries | Select-Object -Unique) { Remove-FromPath $entry }
+    Write-Host "        Done."
+}
+
 function Invoke-Uninstall {
     Write-Host " Tidarr - Uninstall dependencies"
     Write-Host " ----------------------------------------"
@@ -139,83 +207,36 @@ function Invoke-Uninstall {
         if ($confirm -notmatch "^y") { Write-Host "Cancelled."; return }
     }
 
-    Write-Host ""
-    Write-Host "[1/6] Stopping Tidarr processes..."
-    Stop-TidarrProcesses
-    Write-Host "      Done."
+    Remove-UserDependencies
 
-    Write-Host "[2/6] Removing Python packages from every detected interpreter..."
-    foreach ($python in Get-PythonInstallations) {
-        & $python.Path -m pip uninstall -y tiddl beets 2>$null | Out-Null
+    if (Test-Admin) {
+        Remove-SystemDependencies
+    } else {
+        Write-Host ""
+        Write-Host " Administrator rights are needed for Node.js and the machine PATH."
+        Write-Host " Accept the UAC prompt - the second stage continues in a new window."
+        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-SystemStage")
+        if ($Force) { $arguments += "-Force" }
+        Start-Process powershell -Verb RunAs -ArgumentList $arguments
     }
-    Write-Host "      Done."
-
-    Write-Host "[3/6] Removing downloaded tools and project dependencies..."
-    foreach ($path in @("tools", "node_modules", "api\node_modules", "app\node_modules", "api\dist", "app\dist")) {
-        Remove-Item (Join-Path $root $path) -Recurse -Force
-    }
-    Write-Host "      Done."
-
-    Write-Host "[4/6] Removing global npm tools (pnpm, tsx)..."
-    if (Get-Command npm -ErrorAction SilentlyContinue) {
-        & npm uninstall -g pnpm tsx 2>$null | Out-Null
-    }
-    Write-Host "      Done."
-
-    Write-Host "[5/6] Uninstalling winget packages..."
-    # Only Python 3.13+ can have been installed by the launcher (tiddl needs it);
-    # older interpreters on the machine belong to the user and are left alone.
-    $minimumPython = [version]"3.13"
-    $pythons = Get-PythonInstallations
-    $removablePython = $pythons | Where-Object {
-        $_.Version -and ([version]$_.Version -ge $minimumPython)
-    }
-    $keptPython = $pythons | Where-Object {
-        -not ($_.Version -and ([version]$_.Version -ge $minimumPython))
-    }
-    foreach ($python in $keptPython) {
-        Write-Host "      Keeping Python $($python.Version) ($($python.Path)) — older than the version Tidarr installs."
-    }
-    foreach ($python in $removablePython) {
-        if ($python.Path -match "Python(\d)(\d+)") {
-            & winget uninstall "Python.Python.$($Matches[1]).$($Matches[2])" --silent --accept-source-agreements 2>$null | Out-Null
-        }
-    }
-    & winget uninstall "Gyan.FFmpeg" --silent --accept-source-agreements 2>$null | Out-Null
-    & winget uninstall "OpenJS.NodeJS.LTS" --silent --accept-source-agreements 2>$null | Out-Null
-    Write-Host "      Done."
-
-    Write-Host "[6/6] Cleaning PATH entries..."
-    $entries = @(
-        (Join-Path $root "tools\rsgain"),
-        (Join-Path $env:APPDATA "npm"),
-        "C:\Program Files\nodejs",
-        (Join-Path $env:LOCALAPPDATA "Programs\Python\Launcher")
-    )
-    foreach ($python in $removablePython) {
-        if ($python.Path -match "^(.*)\\python\.exe$") {
-            $entries += $Matches[1]
-            $entries += (Join-Path $Matches[1] "Scripts")
-        }
-    }
-    foreach ($entry in $entries | Select-Object -Unique) { Remove-FromPath $entry }
-    Write-Host "      Done."
 
     Write-Host ""
     Write-Host " ----------------------------------------"
-    Write-Host " Uninstall complete. Restart the terminal so PATH changes apply."
+    Write-Host " User-scope uninstall complete."
     Write-Host " ----------------------------------------"
     Write-Host ""
 }
 
-if ($Uninstall) {
+if ($SystemStage) {
     if (-not (Test-Admin)) {
-        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall")
-        if ($Force) { $arguments += "-Force" }
-        Start-Process powershell -Verb RunAs -ArgumentList $arguments
-        exit
+        Write-Host "This stage must run as administrator." -ForegroundColor Red
+        exit 1
     }
-    Invoke-Uninstall
+    Remove-SystemDependencies
+    Write-Host ""
+    Write-Host " ----------------------------------------"
+    Write-Host " Uninstall complete. Restart the terminal so PATH changes apply."
+    Write-Host " ----------------------------------------"
     if (-not $Force) {
         Write-Host " Press Enter to close this window."
         Read-Host | Out-Null
@@ -223,11 +244,16 @@ if ($Uninstall) {
     exit
 }
 
+if ($Uninstall) {
+    Invoke-Uninstall
+    exit
+}
+
 Write-Host ""
 Write-Host " Tidarr Tools"
 Write-Host " ----------------------------------------"
 Write-Host "  [1] Uninstall all dependencies"
-Write-Host "      (Node.js, Python, tiddl + beets, ffmpeg, pnpm/tsx, rsgain)"
+Write-Host "      (Node.js, Python 3.13+, tiddl + beets, ffmpeg, pnpm/tsx, rsgain)"
 Write-Host ""
 Write-Host "  [2] Check installed dependencies"
 Write-Host " ----------------------------------------"
@@ -235,15 +261,7 @@ Write-Host ""
 
 $choice = Read-Host "Choose [1/2]"
 switch ($choice) {
-    "1" {
-        if (-not (Test-Admin)) {
-            $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall")
-            if ($Force) { $arguments += "-Force" }
-            Start-Process powershell -Verb RunAs -ArgumentList $arguments
-            exit
-        }
-        Invoke-Uninstall
-    }
+    "1" { Invoke-Uninstall }
     "2" { Show-Dependencies }
     default { Write-Host "Invalid choice."; exit 1 }
 }
