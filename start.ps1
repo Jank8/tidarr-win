@@ -565,9 +565,21 @@ Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
 $env:VITE_CONFIG_NATIVE_IGNORE_WARNING = "true"
 
 Write-Host " Press Ctrl+C to stop Tidarr."
+
+# Run the `dev` script from package.json without pnpm: pnpm runs it through a
+# pnpm.cmd batch file, and cmd.exe answers Ctrl+C on batch files with
+# "Terminate batch job (Y/N)?". The script itself starts plain node processes.
+$devScript = $null
+try {
+    $devScript = (Get-Content (Join-Path $root "package.json") -Raw | ConvertFrom-Json).scripts.dev
+} catch {}
+if (-not $devScript) {
+    Write-Host "  ERROR: cannot read scripts.dev from package.json." -ForegroundColor Red
+    Read-Host "Press Enter to exit"; exit 1
+}
 $devProcess = Start-Process -FilePath "cmd.exe" `
-    -ArgumentList "/c cd /d `"$root`" && pnpm dev" `
-    -NoNewWindow -PassThru
+    -ArgumentList "/d /s /c `"$devScript`"" `
+    -WorkingDirectory $root -NoNewWindow -PassThru
 
 # Swallow the first Ctrl+C so the shutdown can finish cleanly: kill the tree,
 # then let Wait-Process return and the finally block confirm the ports.
