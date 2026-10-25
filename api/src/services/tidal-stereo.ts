@@ -1,5 +1,13 @@
 import { spawn } from "child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { basename, dirname, join } from "path";
 
 import { PROCESSING_PATH, TIDAL_API_URL } from "../../constants";
@@ -28,10 +36,11 @@ import { logs } from "../processing/utils/logs";
  *             here, so both files end up side by side.
  * - `only`  – nothing to do, stereo is not wanted.
  *
- * Stereo companions keep tiddl's plain file name (they are the copy a library
- * scanner should treat as the track), while the Atmos file tiddl downloaded is
- * renamed with an ` (Atmos)` suffix before the extension. Both presentations
- * are therefore recognisable and can never collide — the only case that would
+ * Albums, single tracks and playlists (including mixes, which are downloaded as
+ * a temporary playlist) are supported. The stereo companion keeps tiddl's plain
+ * file name — it is the copy a library scanner should treat as the track —
+ * while the Atmos file is renamed with an ` (Atmos)` suffix. Both presentations
+ * are therefore recognisable and can never collide; the only case that would
  * need a marker on the stereo copy is a library with further presentations
  * (5.1, 7.1), which Tidal does not expose here.
  */
@@ -59,6 +68,7 @@ type TrackJson = {
   version?: string | null;
   trackNumber?: number;
   artist?: { name?: string };
+  album?: { id?: number };
   audioModes?: string[];
   // Tidal returns a single tag or a list, depending on the endpoint
   mediaMetadata?: { tags?: string | string[] };
@@ -70,6 +80,8 @@ type TrackStreamJson = {
   manifestMimeType?: string;
   manifest?: string;
 };
+
+type AlbumEntry = { track: TrackJson; album: AlbumJson };
 
 /** Path segment cleanup, mirroring tiddl's `_clean_segment`. */
 function cleanSegment(text: string): string {
@@ -92,6 +104,17 @@ function trackSegment(track: TrackJson): string {
     : track.title;
 
   return cleanSegment(`${number}. ${artist} - ${title}`);
+}
+
+function albumDirectory(itemId: string, album: AlbumJson): string {
+  const year = (album.releaseDate ?? "").slice(0, 4);
+
+  return join(
+    PROCESSING_PATH,
+    String(itemId),
+    cleanSegment(album.artist?.name ?? ""),
+    cleanSegment(`${year} - ${album.title}`),
+  );
 }
 
 function hasAtmos(track: TrackJson): boolean {
@@ -216,21 +239,54 @@ async function writeAudioFile(
   await writeTags(file, tags);
 }
 
-function existingAudioFile(base: string): string | undefined {
-  return [`${base}.flac`, `${base}.m4a`, `${base}${ATMOS_SUFFIX}.m4a`].find(
-    existsSync,
-  );
+function listFiles(directory: string): string[] {
+  if (!existsSync(directory)) return [];
+
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const full = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFiles(full));
+    } else {
+      files.push(full);
+    }
+  }
+
+  return files;
 }
 
 /**
- * Marks the file tiddl downloaded as the Atmos one, so both presentations are
- * recognisable in the library (`... (Atmos).m4a` / `... (Stereo).flac`).
+ * Finds the file tiddl wrote for a track. The expected path is derived from the
+ * default template, but a custom template can place it elsewhere — then the
+ * processing folder is scanned for the same file name.
  */
-function markAtmosFile(base: string, itemId: string, title: string): void {
-  const source = `${base}.m4a`;
-  const target = `${base}${ATMOS_SUFFIX}.m4a`;
+function findTiddlFile(
+  expected: string,
+  itemId: string,
+  suffix = "",
+): string | undefined {
+  if (existsSync(expected)) return expected;
 
-  if (!existsSync(source)) return;
+  const name = `${basename(expected)}${suffix}`;
+  const directory = join(PROCESSING_PATH, String(itemId));
+
+  return listFiles(directory).find((file) => basename(file) === name);
+}
+
+/**
+ * Marks the file tiddl downloaded as the Atmos one and returns where it lives,
+ * so the stereo companion can be written next to it even when a custom template
+ * put the files somewhere else.
+ */
+function markAtmosFile(
+  base: string,
+  itemId: string,
+  title: string,
+): string | undefined {
+  const source = findTiddlFile(`${base}.m4a`, itemId);
+  if (!source) return undefined;
+
+  const target = source.replace(/\.m4a$/i, `${ATMOS_SUFFIX}.m4a`);
 
   if (existsSync(target)) {
     // A previous run already marked the file: tiddl downloaded the same track
@@ -248,17 +304,19 @@ function markAtmosFile(base: string, itemId: string, title: string): void {
     } catch {
       // Leave the file alone when it cannot be inspected
     }
-    return;
+    return target;
   }
 
   try {
     renameSync(source, target);
     logs(itemId, `✅ [ATMOS] ${title}: Atmos file marked${ATMOS_SUFFIX}`);
+    return target;
   } catch (error) {
     logs(
       itemId,
       `⚠️ [ATMOS] ${title}: cannot rename Atmos file: ${error instanceof Error ? error.message : String(error)}`,
     );
+    return source;
   }
 }
 
@@ -273,9 +331,34 @@ function trackTags(track: TrackJson, album: AlbumJson): Record<string, string> {
   };
 }
 
-function parseItemUrl(url?: string): { type: string; id: string } | null {
-  const match = url?.match(/\/(album|track)\/(\d+)/);
-  return match ? { type: match[1], id: match[2] } : null;
+function parseItemUrl(
+  url?: string,
+): { type: "album" | "track" | "playlist"; id: string } | null {
+  const albumOrTrack = url?.match(/\/(album|track)\/(\d+)/);
+  if (albumOrTrack) {
+    return {
+      type: albumOrTrack[1] as "album" | "track",
+      id: albumOrTrack[2],
+    };
+  }
+
+  const playlist = url?.match(/\/playlist\/([\w-]{8,})/);
+  if (playlist) return { type: "playlist", id: playlist[1] };
+
+  return null;
+}
+
+async function getAlbum(
+  albumId: string | number,
+  countryCode: string,
+): Promise<AlbumJson | null> {
+  const response = await fetchTidalWithRefresh(
+    `${TIDAL_API_URL}/v1/albums/${albumId}?countryCode=${countryCode}`,
+  );
+
+  if (!response.ok) return null;
+
+  return (await response.json()) as AlbumJson;
 }
 
 async function getAlbumTracks(
@@ -292,10 +375,25 @@ async function getAlbumTracks(
     .filter((track): track is TrackJson => Boolean(track?.id));
 }
 
-async function resolveAlbumAndTracks(
-  parsed: { type: string; id: string },
+async function getPlaylistTracks(
+  playlistId: string,
   countryCode: string,
-): Promise<{ album: AlbumJson; tracks: TrackJson[] }> {
+): Promise<TrackJson[]> {
+  const pages = await fetchAllTidalPages<{ item?: TrackJson }>(
+    `${TIDAL_API_URL}/v1/playlists/${playlistId}/items?countryCode=${countryCode}`,
+    "playlist items",
+  );
+
+  return pages
+    .map((entry) => entry.item)
+    .filter((track): track is TrackJson => Boolean(track?.id));
+}
+
+/** Every track of the item together with the album it belongs to. */
+async function resolveEntries(
+  parsed: { type: "album" | "track" | "playlist"; id: string },
+  countryCode: string,
+): Promise<AlbumEntry[]> {
   if (parsed.type === "track") {
     const trackResponse = await fetchTidalWithRefresh(
       `${TIDAL_API_URL}/v1/tracks/${parsed.id}?countryCode=${countryCode}`,
@@ -304,33 +402,42 @@ async function resolveAlbumAndTracks(
       throw new Error(`track ${parsed.id}: HTTP ${trackResponse.status}`);
     }
 
-    const track = (await trackResponse.json()) as TrackJson & {
-      album?: { id: number };
-    };
+    const track = (await trackResponse.json()) as TrackJson;
     const albumId = track.album?.id;
     if (!albumId) throw new Error(`track ${parsed.id} has no album`);
 
-    const albumResponse = await fetchTidalWithRefresh(
-      `${TIDAL_API_URL}/v1/albums/${albumId}?countryCode=${countryCode}`,
-    );
-    if (!albumResponse.ok) {
-      throw new Error(`album ${albumId}: HTTP ${albumResponse.status}`);
+    const album = await getAlbum(albumId, countryCode);
+    if (!album) throw new Error(`album ${albumId}: not found`);
+
+    return [{ track, album }];
+  }
+
+  if (parsed.type === "album") {
+    const album = await getAlbum(parsed.id, countryCode);
+    if (!album) throw new Error(`album ${parsed.id}: not found`);
+
+    const tracks = await getAlbumTracks(parsed.id, countryCode);
+    return tracks.map((track) => ({ track, album }));
+  }
+
+  // Playlist / mix: every track can come from a different album
+  const tracks = await getPlaylistTracks(parsed.id, countryCode);
+  const albums = new Map<number, AlbumJson | null>();
+  const entries: AlbumEntry[] = [];
+
+  for (const track of tracks) {
+    const albumId = track.album?.id;
+    if (!albumId) continue;
+
+    if (!albums.has(albumId)) {
+      albums.set(albumId, await getAlbum(albumId, countryCode));
     }
 
-    return { album: (await albumResponse.json()) as AlbumJson, tracks: [track] };
+    const album = albums.get(albumId);
+    if (album) entries.push({ track, album });
   }
 
-  const albumResponse = await fetchTidalWithRefresh(
-    `${TIDAL_API_URL}/v1/albums/${parsed.id}?countryCode=${countryCode}`,
-  );
-  if (!albumResponse.ok) {
-    throw new Error(`album ${parsed.id}: HTTP ${albumResponse.status}`);
-  }
-
-  return {
-    album: (await albumResponse.json()) as AlbumJson,
-    tracks: await getAlbumTracks(parsed.id, countryCode),
-  };
+  return entries;
 }
 
 /**
@@ -350,50 +457,43 @@ export async function ensureStereoCompanions(
   const parsed = parseItemUrl(item.url);
   if (!parsed) return;
 
-  if (parsed.type !== "album" && parsed.type !== "track") {
-    logs(item.id, `ℹ️ [ATMOS] Stereo companion skipped for "${item.url}"`);
-    return;
-  }
-
   const { config } = get_tiddl_config();
   const countryCode = config?.auth?.country_code || "US";
   const quality = QUALITY_MAP[item.quality ?? "max"] ?? QUALITY_MAP.max;
 
-  const { album, tracks } = await resolveAlbumAndTracks(parsed, countryCode);
-  const atmosTracks = tracks.filter(hasAtmos);
-  if (atmosTracks.length === 0) return;
-
-  const year = (album.releaseDate ?? "").slice(0, 4);
-  const albumDirectory = join(
-    PROCESSING_PATH,
-    String(item.id),
-    cleanSegment(album.artist?.name ?? ""),
-    cleanSegment(`${year} - ${album.title}`),
-  );
+  const entries = await resolveEntries(parsed, countryCode);
+  const atmosEntries = entries.filter(({ track }) => hasAtmos(track));
+  if (atmosEntries.length === 0) return;
 
   logs(
     item.id,
-    `ℹ️ [ATMOS] ${atmosTracks.length}/${tracks.length} track(s) have a Dolby Atmos version`,
+    `ℹ️ [ATMOS] ${atmosEntries.length}/${entries.length} track(s) have a Dolby Atmos version`,
   );
 
   let added = 0;
 
-  for (const track of atmosTracks) {
-    const base = join(albumDirectory, trackSegment(track));
+  for (const { track, album } of atmosEntries) {
+    const base = join(albumDirectory(item.id, album), trackSegment(track));
 
     try {
-      // tiddl saved the Atmos stream under the regular track name; mark it so
-      // the two presentations are distinguishable in the library
-      markAtmosFile(base, item.id, track.title);
+      // Mark the file tiddl saved and learn where it actually sits
+      const atmosFile = markAtmosFile(base, item.id, track.title);
+      const fileBase = atmosFile
+        ? join(
+            dirname(atmosFile),
+            basename(atmosFile)
+              .replace(/\.m4a$/i, "")
+              .replace(/ \(Atmos\)$/i, ""),
+          )
+        : base;
 
       const stereo = await getTrackStream(track.id, quality, false);
 
       if (stereo?.audioMode === "STEREO") {
         const { urls, codecs } = parseManifest(stereo);
         const extension = extensionFor(stereo, codecs);
-        // The stereo copy keeps the plain track name: it is the one a library
-        // scanner should treat as the track, the Atmos file carries the marker
-        const file = `${base}${extension}`;
+        // Plain name: this is the copy a library scanner should treat as the track
+        const file = `${fileBase}${extension}`;
 
         if (existsSync(file)) {
           logs(item.id, `✅ [ATMOS] ${track.title}: stereo already present`);
@@ -401,7 +501,7 @@ export async function ensureStereoCompanions(
         }
 
         // Files written by 1.1.6 and older had a ` (Stereo)` suffix
-        const legacy = `${base}${STEREO_SUFFIX}${extension}`;
+        const legacy = `${fileBase}${STEREO_SUFFIX}${extension}`;
         if (existsSync(legacy)) {
           renameSync(legacy, file);
           logs(
@@ -427,8 +527,11 @@ export async function ensureStereoCompanions(
         continue;
       }
 
-      const existing = existingAudioFile(base);
-      if (existing) {
+      if (
+        existsSync(`${fileBase}.flac`) ||
+        existsSync(`${fileBase}.m4a`) ||
+        Boolean(findTiddlFile(`${fileBase}${ATMOS_SUFFIX}.m4a`, item.id))
+      ) {
         logs(item.id, `✅ [ATMOS] ${track.title}: already downloaded`);
         continue;
       }
@@ -442,7 +545,7 @@ export async function ensureStereoCompanions(
       const { urls, codecs } = parseManifest(atmos);
       const buffer = await downloadUrls(urls);
       const extension = extensionFor(atmos, codecs);
-      const file = `${base}${ATMOS_SUFFIX}${extension}`;
+      const file = `${fileBase}${ATMOS_SUFFIX}${extension}`;
       await writeAudioFile(file, buffer, trackTags(track, album));
 
       added += 1;
