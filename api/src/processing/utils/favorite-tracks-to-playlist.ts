@@ -52,15 +52,49 @@ async function fetchAlbumDetails(
     const response = await fetchTidalWithRefresh(
       `${TIDAL_API_URL}/v1/albums?ids=${batch.join(",")}&countryCode=${country}`,
     );
-    if (!response.ok) continue;
-    const data = await response.json();
-    const albums: (AlbumDetails & { id: number })[] = data.items ?? data;
-    for (const album of albums) {
+
+    if (response.ok) {
+      const data = await response.json();
+      const albums: (AlbumDetails & { id: number })[] = data.items ?? data;
+      for (const album of albums) {
+        detailsMap.set(album.id, album);
+      }
+    }
+
+    // The batch endpoint drops unavailable albums and fails entirely on one bad
+    // id; ask for the missing ones one by one, otherwise their tracks end up as
+    // "Unknown Artist/0000 - …" and never match a file in the library.
+    for (const albumId of batch) {
+      if (detailsMap.has(albumId)) continue;
+
+      const single = await fetchTidalWithRefresh(
+        `${TIDAL_API_URL}/v1/albums/${albumId}?countryCode=${country}`,
+      );
+      if (!single.ok) continue;
+
+      const album = (await single.json()) as AlbumDetails & { id: number };
       detailsMap.set(album.id, album);
     }
   }
 
   return detailsMap;
+}
+
+/**
+ * Path segment cleanup, mirroring tiddl's `_clean_segment`: illegal characters
+ * are removed *after* the template value is substituted, so an album title with
+ * a slash (`No Looking Back / Unmasked`) stays one folder instead of creating a
+ * nested one.
+ */
+function cleanSegment(text: string): string {
+  const cleaned = text
+    .replace(/[\\/:"*?<>|]+/g, "")
+    .replace(/\.{2,}/g, ".")
+    .replace(/[ .]+$/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return cleaned || "_";
 }
 
 function resolveTrackTemplate(
@@ -85,19 +119,23 @@ function resolveTrackTemplate(
   const volume = (track.volumeNumber ?? 1).toString();
 
   return template
-    .replace(/\{album\.artist\}/g, albumArtist)
-    .replace(/\{album\.date:%Y\}/g, year)
-    .replace(/\{album\.title\}/g, track.album.title || "Unknown Album")
-    .replace(
-      /\{item\.number:02d\}/g,
-      (track.trackNumber ?? 1).toString().padStart(2, "0"),
-    )
-    .replace(/\{item\.title_version\}/g, titleVersion)
-    .replace(/\{item\.title\}/g, track.title)
-    .replace(/\{item\.artist\}/g, trackArtist)
-    .replace(/\{item\.volume\}/g, volume)
     .split("/")
-    .map((segment) => segment.replace(/\.+$/, ""))
+    .map((segment) =>
+      cleanSegment(
+        segment
+          .replace(/\{album\.artist\}/g, albumArtist)
+          .replace(/\{album\.date:%Y\}/g, year)
+          .replace(/\{album\.title\}/g, track.album.title || "Unknown Album")
+          .replace(
+            /\{item\.number:02d\}/g,
+            (track.trackNumber ?? 1).toString().padStart(2, "0"),
+          )
+          .replace(/\{item\.title_version\}/g, titleVersion)
+          .replace(/\{item\.title\}/g, track.title)
+          .replace(/\{item\.artist\}/g, trackArtist)
+          .replace(/\{item\.volume\}/g, volume),
+      ),
+    )
     .join("/");
 }
 
