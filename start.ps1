@@ -597,3 +597,10 @@ try {
     }
     Write-Host ""
 }
+
+# When started from a console (double-click), keep the window open long enough to
+# read the summary. Redirected input means the launcher runs unattended.
+if (-not [Console]::IsInputRedirected) {
+    Write-Host " Press Enter to close this window."
+    Read-Host | Out-Null
+}
