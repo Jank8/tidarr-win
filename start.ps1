@@ -607,21 +607,23 @@ try {
         Write-Host " Tidarr stopped - ports 3000 and 8484 are free." -ForegroundColor Green
     }
     Write-Host ""
-}
 
-# When started from a console (double-click), keep the window open long enough to
-# read the summary. Redirected input means the launcher runs unattended.
-if (-not [Console]::IsInputRedirected) {
-    Write-Host " Press Enter to close this window."
-    Read-Host | Out-Null
-}
+    # Keep the summary on screen. This must live in the finally block: after
+    # Ctrl+C the script unwinds through it and would not reach code placed after
+    # the try/finally.
+    if (-not [Console]::IsInputRedirected) {
+        Write-Host " Press Enter to close this window."
+        Read-Host | Out-Null
+    } else {
+        Start-Sleep -Seconds 2
+    }
 
-# Close the batch only after the summary was read: killing cmd.exe earlier tore
-# the console down before the messages were visible, and leaving it alive makes
-# it ask "Terminate batch job (Y/N)?" after Ctrl+C.
-if ($parentProcessId) {
-    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$parentProcessId" -ErrorAction SilentlyContinue
-    if ($parent -and $parent.Name -eq "cmd.exe" -and $parent.CommandLine -and $parent.CommandLine -match "start\.cmd") {
-        Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
+    # Close the batch (when started through start.cmd) only now, so it cannot
+    # print "Terminate batch job (Y/N)?" on top of the summary.
+    if ($parentProcessId) {
+        $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$parentProcessId" -ErrorAction SilentlyContinue
+        if ($parent -and $parent.Name -eq "cmd.exe" -and $parent.CommandLine -and $parent.CommandLine -match "start\.cmd") {
+            Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
+        }
     }
 }
