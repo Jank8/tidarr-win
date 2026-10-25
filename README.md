@@ -130,8 +130,10 @@ the album.
 
 ## Optional features
 
-Two features need an external tool. Turn the flag on in `.env` and run
-`start.cmd` again — the launcher installs the tool itself, no manual setup:
+Two features need an external tool. Both are **on by default**: the launcher
+installs the tool on start, no manual setup. Set the flag to `false` in `.env`
+and run `start.cmd` again to turn one off (nothing is installed or run while it
+is off):
 
 | flag in `.env` | tool | what it does |
 |---|---|---|
@@ -139,8 +141,7 @@ Two features need an external tool. Turn the flag on in `.env` and run
 | `REPLAY_GAIN=true` | rsgain | writes ReplayGain tags into the downloaded files |
 
 beets is installed with pip into the same Python as tiddl; rsgain is a portable
-build downloaded into `tools\rsgain` and added to PATH. Nothing is installed
-while the flag is off, so a default install stays small.
+build downloaded into `tools\rsgain` and added to PATH.
 
 ## Troubleshooting
 
