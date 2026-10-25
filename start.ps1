@@ -378,6 +378,21 @@ if ((Get-Setting "REPLAY_GAIN") -eq "true") {
     }
 }
 
+# .sh hooks need a POSIX shell. Git for Windows ships one but does not always
+# put it on PATH, so make it available for this session when such a hook exists.
+$shHooks = @("custom-script.sh", "custom-post-script.sh") |
+    ForEach-Object { Join-Path $root "userfiles\shared\$_" } |
+    Where-Object { Test-Path $_ }
+if ($shHooks -and -not (Get-Command sh -ErrorAction SilentlyContinue)) {
+    foreach ($gitBin in @("C:\Program Files\Git\bin", (Join-Path $env:LOCALAPPDATA "Programs\Git\bin"))) {
+        if (Test-Path (Join-Path $gitBin "sh.exe")) {
+            $env:PATH = "$gitBin;$env:PATH"
+            Write-Host "  Git Bash found for .sh hooks" -ForegroundColor Green
+            break
+        }
+    }
+}
+
 # ── 4. Node dependencies ─────────────────────────────────────────────────────
 Write-Host "[4/4] Checking Node dependencies..."
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
@@ -416,11 +431,74 @@ Write-Host ""
 Write-Host "----------------------------------------"
 Write-Host " Starting Tidarr..."
 Write-Host " Frontend : http://localhost:3000"
-Write-Host " API      : http://localhost:8484"
+Write-Host " API      : http://127.0.0.1:8484"
 Write-Host "----------------------------------------"
 Write-Host ""
 
-# Open browser before starting server - modern browsers will auto-reload
-Start-Process "http://localhost:3000"
+# Ports must be free; a stale instance of this folder is stopped, anything
+# else is reported instead of failing later with EADDRINUSE.
+function Get-PortOwner {
+    param([int]$Port)
+    $connection = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $connection) { return $null }
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($connection.OwningProcess)" -ErrorAction SilentlyContinue
+    return @{
+        Port        = $Port
+        Id          = $connection.OwningProcess
+        Name        = $process.Name
+        CommandLine = $process.CommandLine
+    }
+}
+
+function Test-ProcessFromThisFolder {
+    # The API runs through a globally installed tsx, so the process command line
+    # may not contain the project path; walk up the parent chain instead
+    # (launcher -> cmd -> concurrently -> tsx -> node).
+    param([int]$ProcessId)
+    $current = $ProcessId
+    for ($depth = 0; $depth -lt 10 -and $current; $depth++) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$current" -ErrorAction SilentlyContinue
+        if (-not $process) { return $false }
+        if ($process.CommandLine -and $process.CommandLine.Contains($root)) { return $true }
+        $current = $process.ParentProcessId
+    }
+    return $false
+}
+
+foreach ($port in @(3000, 8484)) {
+    $owner = Get-PortOwner -Port $port
+    if (-not $owner) { continue }
+
+    if (Test-ProcessFromThisFolder -ProcessId $owner.Id) {
+        Write-Host "  Port $port held by a previous Tidarr instance (PID $($owner.Id)), stopping it..." -ForegroundColor Yellow
+        Stop-Process -Id $owner.Id -Force -ErrorAction SilentlyContinue
+        for ($wait = 0; $wait -lt 20; $wait++) {
+            if (-not (Get-PortOwner -Port $port)) { break }
+            Start-Sleep -Milliseconds 500
+        }
+        continue
+    }
+
+    Write-Host "  ERROR: port $port is already in use by $($owner.Name) (PID $($owner.Id))." -ForegroundColor Red
+    Write-Host "  Close that program (or its console window) and run start.cmd again." -ForegroundColor Yellow
+    Read-Host "Press Enter to exit"; exit 1
+}
+
+# Open the browser only once the API answers, so the UI does not greet the user
+# with "Tidarr API is not reachable" during startup. Poll the API directly: a
+# request through Vite would log proxy errors while the API is still down.
+Start-Job -ScriptBlock {
+    param($api, $url)
+    for ($attempt = 0; $attempt -lt 120; $attempt++) {
+        try {
+            $null = Invoke-WebRequest -Uri "$api/api/is-auth-active" -UseBasicParsing -TimeoutSec 2
+            Start-Process $url
+            return
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+} -ArgumentList "http://127.0.0.1:8484", "http://localhost:3000" | Out-Null
 
 Run-Cmd "pnpm dev"
