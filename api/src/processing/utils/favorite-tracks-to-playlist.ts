@@ -182,10 +182,11 @@ export async function generateFavoriteTracksM3U(
 
   const playlistTemplate =
     tiddlConfig?.m3u?.templates?.playlist ?? `Playlists/{playlist.title}`;
-  const resolvedPlaylistPath = playlistTemplate.replace(
-    /\{playlist\.title\}/g,
-    item.title || "Favorite Tracks",
-  );
+  const resolvedPlaylistPath = playlistTemplate
+    .replace(/\{playlist\.title\}/g, item.title || "Favorite Tracks")
+    // tiddl's {type} is album / playlist / mix; without this the folder was
+    // literally named "{type}"
+    .replace(/\{type\}/g, "favorites");
 
   logs(item.id, `🕖 [FAV] Fetching favorite tracks from Tidal...`);
 
@@ -206,6 +207,7 @@ export async function generateFavoriteTracksM3U(
     );
 
     let missing = 0;
+    const missingTracks: string[] = [];
     const m3uEntries = favoriteTracks
       .filter(({ item: track }) => !!track)
       .map(({ item: track }) => {
@@ -218,6 +220,11 @@ export async function generateFavoriteTracksM3U(
         const audioFile = findAudioFile(libraryPath, resolvedPath);
         if (!audioFile) {
           missing++;
+          const artist =
+            track.artists?.find((a) => a.type === "MAIN")?.name ??
+            track.artists?.[0]?.name ??
+            "Unknown Artist";
+          missingTracks.push(`${artist} - ${track.title}`);
           return null;
         }
         return path.join(basePath, path.relative(libraryPath, audioFile));
@@ -228,6 +235,20 @@ export async function generateFavoriteTracksM3U(
       item.id,
       `🔍 [FAV] albumDetailsMap size: ${albumDetailsMap.size}, resolved: ${m3uEntries.length}, missing: ${missing}`,
     );
+
+    if (missingTracks.length > 0) {
+      const MAX_LISTED = 50;
+      logs(item.id, `ℹ️ [FAV] Missing from the library:`);
+      for (const entry of missingTracks.slice(0, MAX_LISTED)) {
+        logs(item.id, `   • ${entry}`);
+      }
+      if (missingTracks.length > MAX_LISTED) {
+        logs(
+          item.id,
+          `   … and ${missingTracks.length - MAX_LISTED} more`,
+        );
+      }
+    }
 
     if (m3uEntries.length === 0) {
       logs(
