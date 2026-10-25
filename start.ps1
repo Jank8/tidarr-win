@@ -2,6 +2,13 @@
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Always work from the project folder, no matter where the script was started.
 Set-Location $root
+try { $Host.UI.RawUI.WindowTitle = "Tidarr" } catch {}
+# Parent cmd.exe (start.cmd) is closed on shutdown so it cannot ask about
+# "Terminate batch job" after Ctrl+C.
+$parentProcessId = 0
+try {
+    $parentProcessId = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction SilentlyContinue).ParentProcessId
+} catch {}
 
 function Refresh-Path {
     # Merge the registry PATH with the inherited one, so tools installed after
@@ -564,7 +571,11 @@ $devProcess = Start-Process -FilePath "cmd.exe" `
 
 # Swallow the first Ctrl+C so the shutdown can finish cleanly: kill the tree,
 # then let Wait-Process return and the finally block confirm the ports.
-$shutdownState = [hashtable]::Synchronized(@{ Root = $root; Stopping = $false })
+$shutdownState = [hashtable]::Synchronized(@{
+    Root   = $root
+    Parent = $parentProcessId
+    Stopping = $false
+})
 try {
     Register-ObjectEvent -InputObject ([Console]) -EventName CancelKeyPress -MessageData $shutdownState -Action {
         $state = $Event.MessageData
@@ -603,4 +614,14 @@ try {
 if (-not [Console]::IsInputRedirected) {
     Write-Host " Press Enter to close this window."
     Read-Host | Out-Null
+}
+
+# Close the batch only after the summary was read: killing cmd.exe earlier tore
+# the console down before the messages were visible, and leaving it alive makes
+# it ask "Terminate batch job (Y/N)?" after Ctrl+C.
+if ($parentProcessId) {
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$parentProcessId" -ErrorAction SilentlyContinue
+    if ($parent -and $parent.Name -eq "cmd.exe" -and $parent.CommandLine -and $parent.CommandLine -match "start\.cmd") {
+        Stop-Process -Id $parent.ProcessId -Force -ErrorAction SilentlyContinue
+    }
 }
