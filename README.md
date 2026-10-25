@@ -111,6 +111,22 @@ Put the most specific one there — PowerShell wins over `.cmd`, `.cmd` over
 - The download path can be changed in Settings → Config
 - `userfiles\` is gitignored, so your credentials and music are never committed
 
+## Dolby Atmos
+
+Tidal serves one presentation per request — stereo or Atmos — so Tidarr fills in
+the other one after tiddl finishes. The button in the header picks the mode
+(`atmos_filter` in `userfiles\shared\.tiddl\config.toml`):
+
+| mode | what lands in the library |
+|---|---|
+| **No Atmos** | stereo `.flac` only; tracks Tidal has as Atmos get their stereo downmix, and if no stereo version exists the Atmos `.m4a` is kept instead of skipping the track |
+| **Atmos only** | `.m4a` (eac3) only |
+| **Atmos allowed** | both — the Atmos `.m4a` and `… (Stereo).flac` next to it |
+
+Stereo companions are written by Tidarr (tags added with ffmpeg) and use tiddl's
+naming with a ` (Stereo)` suffix. Media servers will list both files as two
+tracks of the album.
+
 ## Optional features
 
 Two features need an external tool. Turn the flag on in `.env` and run

@@ -12,6 +12,7 @@ import { ntfyPush } from "../../services/ntfy";
 import { plexUpdate } from "../../services/plex";
 import { hookPushOver } from "../../services/pushover";
 import { applyReplayGain } from "../../services/rsgain";
+import { ensureStereoCompanions } from "../../services/tidal-stereo";
 import { ProcessingItemType, ProcessingItemWithPlaylist } from "../../types";
 import { generateFavoriteTracksM3U } from "../utils/favorite-tracks-to-playlist";
 import {
@@ -68,6 +69,18 @@ export async function postProcessTidarr(
     logs(
       item.id,
       "⚠️ [TIDDL] An error occured while downloading. Rescuing any downloaded files...",
+    );
+  }
+
+  // Add the stereo version of Dolby Atmos tracks (Tidal serves one presentation
+  // per request, see services/tidal-stereo.ts). Must run before the file check:
+  // with `none` tiddl skips Atmos tracks, so an Atmos-only album is empty here.
+  try {
+    await ensureStereoCompanions(item);
+  } catch (error) {
+    logs(
+      item.id,
+      `⚠️ [ATMOS] Stereo companion pass failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 
