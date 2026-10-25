@@ -162,10 +162,11 @@ sure ports 3000 and 8484 are not used by another program.
 **`API Error: …, 429/0` in the item terminal**
 
 Tidal is rate limiting the account — a favorites download with a few hundred
-tracks asks for thousands of endpoints. Tidarr detects the 429, waits and
-retries on its own (1, 2, 4, then 5 minutes, up to 5 attempts) instead of
-hammering the API; `TIDAL_RATE_LIMIT_WAIT` in `.env` sets the base wait in
-seconds. For very large jobs, lowering `threads_count` in
+tracks asks for thousands of endpoints. The download is stopped at the first
+429 instead of skipping every remaining track, and retried on its own after 1,
+2, 4 and 5 minutes (up to 5 attempts); files already downloaded are kept, so the
+retry continues where it stopped. `TIDAL_RATE_LIMIT_WAIT` in `.env` sets the
+base wait in seconds. For very large jobs, lowering `threads_count` in
 `userfiles\shared\.tiddl\config.toml` (e.g. to 1) also reduces the burst.
 
 ## Original Project

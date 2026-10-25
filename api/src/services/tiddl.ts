@@ -160,8 +160,26 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
       .filter(([, kind]) => kind !== null)
       .map(([line]) => line);
 
-    if (errorLines.some((line) => isRateLimitedLine(line))) {
+    if (errorLines.some((line) => isRateLimitedLine(line)) && !rateLimited) {
+      // Tidal is refusing requests: stop here instead of walking through the
+      // remaining tracks. The queue manager waits (1, 2, 4, 5 min) and retries,
+      // and tiddl resumes with the files that are already downloaded.
       rateLimited = true;
+      hasProcessingError = true;
+      hasNetworkError = true;
+
+      logs(
+        item.id,
+        "⏳ [TIDAL] Tidal rate limit (429) — stopping the download, it will be retried after a pause",
+      );
+
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+
+      return;
     }
 
     if (errorLines.length > 0) {

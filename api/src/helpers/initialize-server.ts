@@ -61,6 +61,29 @@ export function initializeFiles(): string {
       output.push("✅ [BEETS] Load config from template");
     }
 
+    // A relative `import.log` is resolved against beets' own config directory
+    // (%APPDATA%\beets\…), which does not contain that folder - beets then exits
+    // with "Could not open log file for writing" and the whole tagging step is
+    // lost. Configs created before this fix still carry it; rewrite them once.
+    try {
+      const beetsLogPath = join(SHARED_URL, "beets", "beet.log").replace(
+        /\\/g,
+        "/",
+      );
+      const beetsConfig = readFileSync(beetsConfigPath, "utf-8");
+      const patched = beetsConfig.replace(
+        /^(\s*)log:\s*.*$/m,
+        `$1log: ${beetsLogPath}`,
+      );
+
+      if (patched !== beetsConfig) {
+        writeFileSync(beetsConfigPath, patched, "utf-8");
+        output.push("✅ [BEETS] Log path fixed in beets-config.yml");
+      }
+    } catch {
+      output.push("⚠️ [BEETS] Could not update the log path");
+    }
+
     // Create beets directory and files
     const beetsDir = join(SHARED_URL, "beets");
     if (!existsSync(beetsDir)) {
