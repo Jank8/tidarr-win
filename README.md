@@ -62,18 +62,43 @@ tidarr-win\
 
 ## Ports
 
-- Web UI: `3000`
-- API: `8484`
+- Web UI: `http://localhost:3000`
+- API: `http://127.0.0.1:8484`
 
-Both must be free; if a previous instance is still running, close its console
-window first.
+Both are bound to loopback only — the API has no authentication unless you set
+`ADMIN_PASSWORD` in `.env`, so exposing it would hand your Tidal token to the
+whole network. To allow another machine (e.g. Lidarr) to reach Tidarr, set
+`HOST=0.0.0.0` in `.env` and restart.
+
+The launcher checks both ports before starting: a leftover Tidarr instance from
+this folder is stopped automatically, anything else is reported with its PID.
 
 ## Cleanup and uninstall
 
 ```
-cleanup.cmd     → removes generated state, keeps dependencies
-uninstall.cmd   → removes Node.js, Python, tiddl, ffmpeg (music is kept)
+cleanup.cmd     → resets the app to a clean state
+                  [1] quick: config, Tidal token, queue, processing, build output
+                      (keeps node_modules and tools → fast restart)
+                  [2] full:  also node_modules and tools\rsgain
+                  music files are never touched
+uninstall.cmd   → removes the dependencies
+                  Node.js, Python, tiddl + beets, ffmpeg, pnpm/tsx, rsgain,
+                  tools\ folder and the PATH entries it added
 ```
+
+## Custom scripts
+
+Post-processing hooks live in `userfiles\shared\` and run with the matching
+native shell:
+
+| file | runtime |
+|---|---|
+| `custom-script.ps1` / `custom-post-script.ps1` | PowerShell |
+| `custom-script.cmd` / `.bat` | cmd.exe |
+| `custom-script.sh` / `custom-post-script.sh` | `sh` from Git for Windows |
+
+Put the most specific one there — PowerShell wins over `.cmd`, `.cmd` over
+`.sh`. If none exists, the hook is simply skipped.
 
 ## Notes
 

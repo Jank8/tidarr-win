@@ -1,6 +1,6 @@
 {
   "name": "tidarr-main",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "packageManager": "pnpm@10.28.2",
   "scripts": {
@@ -9,13 +9,10 @@
     "dev": "concurrently -n api,front \"pnpm --filter tidarr-api start\" \"pnpm --filter tidarr-react start\"",
     "prod": "node ./api/dist/index.js",
     "lint": "oxlint -c .oxlintrc.json .",
-    "lint-fix": "oxlint -c .oxlintrc.json --fix .",
-    "format": "oxfmt -c .oxfmtrc.json \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,css}\"",
-    "format-check": "oxfmt -c .oxfmtrc.json --check \"**/*.{js,jsx,ts,tsx,mjs,cjs,json,css}\""
+    "lint-fix": "oxlint -c .oxlintrc.json --fix ."
   },
   "devDependencies": {
     "concurrently": "^10.0.6",
-    "oxfmt": "^0.73.0",
     "oxlint": "^1.88.0",
     "shell-quote": "1.12.0",
     "typescript": "^7.0.2"
