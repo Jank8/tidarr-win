@@ -174,8 +174,14 @@ export function APIFetcherProvider({ children }: { children: ReactNode }) {
         onMessage(message);
       },
       onResponseError({ response }) {
-        console.log(`EventSource close : ${response}`);
-        controller.abort();
+        console.log(`EventSource error : ${response?.status ?? "network"}`);
+        // Only give up when retrying cannot help. Killing the stream on a
+        // restarting API (or a proxy hiccup) left the page showing the queue
+        // from the moment it was loaded until a manual reload; the client
+        // retries on its own with a capped exponential backoff.
+        if (response?.status === 401 || response?.status === 403) {
+          controller.abort();
+        }
       },
     });
 

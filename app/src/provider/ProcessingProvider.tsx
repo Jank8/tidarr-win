@@ -43,6 +43,12 @@ const ProcessingContext = React.createContext<ProcessingContextType>(
   {} as ProcessingContextType,
 );
 
+// The API pushes a full snapshot every 10 s, so a stream that stays silent is
+// dead (API restart, dropped proxy connection, machine resumed from sleep).
+// Reopen it instead of showing the queue from the moment the page was loaded.
+const STALL_TIMEOUT_MS = 25_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
+
 export function ProcessingProvider({ children }: { children: ReactNode }) {
   const [processingList, setProcessingList] = useState<ProcessingItemType[]>();
   const [isPaused, setIsPaused] = useState<boolean>();
@@ -50,6 +56,7 @@ export function ProcessingProvider({ children }: { children: ReactNode }) {
   const [batchCount, setBatchCount] = useState<number>(0);
   const [batchResumeAt, setBatchResumeAt] = useState<number | null>(null);
   const eventSourceRef = useRef<EventSourceController | null>(null);
+  const lastEventAt = useRef<number>(0);
 
   const {
     actions: { list_sse, remove, save, single_download, retry_post_processing },
@@ -116,21 +123,47 @@ export function ProcessingProvider({ children }: { children: ReactNode }) {
     eventSourceRef.current = null;
   }, []);
 
-  useEffect(() => {
+  const openStreamProcessing = useCallback(() => {
     if (eventSourceRef.current) return;
 
+    lastEventAt.current = Date.now();
     const { controller } = list_sse(
-      setProcessingList,
+      (list) => {
+        lastEventAt.current = Date.now();
+        setProcessingList(list);
+      },
       setIsPaused,
       setBatchCount,
       setBatchResumeAt,
     );
     eventSourceRef.current = controller;
+  }, [list_sse]);
+
+  useEffect(() => {
+    openStreamProcessing();
     window.addEventListener("beforeunload", closeStreamProcessing);
     return () => {
       window.removeEventListener("beforeunload", closeStreamProcessing);
     };
-  }, [closeStreamProcessing, list_sse]);
+  }, [closeStreamProcessing, openStreamProcessing]);
+
+  useEffect(() => {
+    const checkStream = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastEventAt.current < STALL_TIMEOUT_MS) return;
+
+      closeStreamProcessing();
+      openStreamProcessing();
+    };
+
+    const timer = window.setInterval(checkStream, WATCHDOG_INTERVAL_MS);
+    document.addEventListener("visibilitychange", checkStream);
+
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", checkStream);
+    };
+  }, [closeStreamProcessing, openStreamProcessing]);
 
   return (
     <ProcessingContext.Provider

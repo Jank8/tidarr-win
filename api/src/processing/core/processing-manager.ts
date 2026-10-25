@@ -30,24 +30,45 @@ export function sanitizeProcessingData(
   return data.map(({ process, ...rest }) => rest);
 }
 
-function notifySSEConnections(
-  app: Express,
-  isPaused: boolean,
-  batchCount: number,
-  batchResumeAt: number | null,
-) {
-  const { processingStack, activeListConnections } = app.locals;
+/**
+ * Serializes the full queue state that is pushed to every SSE client.
+ */
+export function buildQueueEvent(app: Express): string {
+  const { processingStack } = app.locals;
+  const { isPaused, batchCount, batchResumeAt } =
+    processingStack.actions.getQueueStatus();
 
-  const payload = JSON.stringify({
+  return JSON.stringify({
     items: sanitizeProcessingData(processingStack.data),
     isPaused,
     batchCount,
     batchResumeAt,
   });
+}
 
-  activeListConnections.forEach((conn: Response) => {
-    conn.write(`data: ${payload}\n\n`);
-  });
+/**
+ * Sends one payload to every connected queue stream.
+ * A connection that died is dropped instead of throwing: one broken client must
+ * not stop the updates for the others.
+ */
+export function broadcastQueueEvent(app: Express, payload: string) {
+  const connections: Response[] = app.locals.activeListConnections ?? [];
+  const alive: Response[] = [];
+
+  for (const conn of connections) {
+    if (conn.writableEnded || conn.destroyed) continue;
+
+    try {
+      conn.write(`data: ${payload}\n\n`);
+      alive.push(conn);
+    } catch {
+      // Drop it; the browser reopens the stream.
+    }
+  }
+
+  if (alive.length !== connections.length) {
+    app.locals.activeListConnections = alive;
+  }
 }
 
 function notifyItemOutput(app: Express, itemId: string, output: string) {
@@ -90,12 +111,7 @@ export const ProcessingStack = () => {
   );
 
   function notifySSE() {
-    notifySSEConnections(
-      app,
-      queueManager.isPausedState(),
-      queueManager.getBatchCount(),
-      queueManager.getBatchResumeAt(),
-    );
+    broadcastQueueEvent(app, buildQueueEvent(app));
   }
 
   async function loadDataFromFile() {
