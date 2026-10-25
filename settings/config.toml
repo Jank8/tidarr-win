@@ -39,7 +39,7 @@ video = "{album.artist}/videos/{item.artist}/{item.artist} - {item.title}"
 # normal - 320 kbps, m4a
 # high - 16 bit, 44.1 kHz, flac
 # max - up to 24 bit, 192 kHz, flac
-track_quality = "high"
+track_quality = "max"
 
 # sd - 360p
 # hd - 720p
@@ -97,7 +97,7 @@ match_existing_path_case = false
 # only - download only DOLBY_ATMOS tracks
 # allow - download both
 # (both versions won't be downloaded at a time, it depends on what Tidal returns)
-atmos_filter = "none"
+atmos_filter = "allow"
 
 
 [metadata]

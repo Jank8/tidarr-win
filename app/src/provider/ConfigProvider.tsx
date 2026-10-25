@@ -108,8 +108,8 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     setConfig(data?.parameters);
     setTiddlConfig(data?.tiddl_config);
     setConfigErrors(data?.configErrors);
-    setQuality(data?.tiddl_config?.download?.track_quality);
-    setAtmosFilter(data?.tiddl_config?.download?.atmos_filter);
+    setQuality(data?.tiddl_config?.download?.track_quality ?? "max");
+    setAtmosFilter(data?.tiddl_config?.download?.atmos_filter ?? "allow");
   };
 
   // Check Updates

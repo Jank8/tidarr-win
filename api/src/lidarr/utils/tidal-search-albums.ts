@@ -62,7 +62,7 @@ export async function addAlbumToQueue(
 
     const tiddlQuality = quality
       ? mapQualityToTiddl(quality)
-      : app.locals.tiddlConfig?.download?.track_quality || "high";
+      : app.locals.tiddlConfig?.download?.track_quality || "max";
 
     const processingItem = {
       id: id,
@@ -71,7 +71,7 @@ export async function addAlbumToQueue(
       type: "album" as const,
       status: "queue_download" as const,
       quality: tiddlQuality,
-      atmosFilter: app.locals.tiddlConfig?.download?.atmos_filter,
+      atmosFilter: app.locals.tiddlConfig?.download?.atmos_filter || "allow",
       url: `https://www.tidal.com/album/${id}`,
       loading: true,
       error: false,

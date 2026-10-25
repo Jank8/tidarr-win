@@ -26,7 +26,12 @@ router.post(
 
       // Fall back to server-configured quality if the client didn't set one
       if (!item.quality) {
-        item.quality = req.app.locals.tiddlConfig?.download?.track_quality;
+        item.quality =
+          req.app.locals.tiddlConfig?.download?.track_quality || "max";
+      }
+      if (!item.atmosFilter) {
+        item.atmosFilter =
+          req.app.locals.tiddlConfig?.download?.atmos_filter || "allow";
       }
 
       await req.app.locals.processingStack.actions.addItem(item);
