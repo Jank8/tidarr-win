@@ -6,7 +6,7 @@
   "scripts": {
     "app-build": "pnpm --filter tidarr-react build",
     "api-build": "pnpm --filter tidarr-api build",
-    "dev": "node ./node_modules/concurrently/dist/bin/index.js -n api,front \"node ./node_modules/tsx/dist/cli.mjs --watch ./api/index.ts\" \"node ./app/node_modules/vite/bin/vite.js dev ./app\"",
+    "dev": "node ./node_modules/concurrently/dist/bin/index.js -n api,front \"node ./node_modules/tsx/dist/cli.mjs watch --exclude=./node_modules/** --exclude=./userfiles/** ./api/index.ts\" \"node ./app/node_modules/vite/bin/vite.js dev ./app\"",
     "prod": "node ./api/dist/index.js",
     "lint": "oxlint -c .oxlintrc.json .",
     "lint-fix": "oxlint -c .oxlintrc.json --fix ."
