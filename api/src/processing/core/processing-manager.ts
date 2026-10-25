@@ -1,5 +1,14 @@
 import { Express, Response } from "express";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
+import { join } from "path";
 
+import { CONFIG_PATH } from "../../../constants";
 import { getAppInstance } from "../../helpers/app-instance";
 import {
   addItemsToFile,
@@ -28,6 +37,82 @@ export function sanitizeProcessingData(
 ): ProcessingItemType[] {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   return data.map(({ process, ...rest }) => rest);
+}
+
+// The console output lived in memory only, so every API restart left a finished
+// item with an empty terminal dialog. Mirror it to disk next to the queue and
+// restore it when the queue is loaded.
+const OUTPUT_LOG_PATH = join(CONFIG_PATH, ".logs");
+const OUTPUT_WRITE_DELAY_MS = 500;
+
+const pendingOutputWrites = new Map<string, NodeJS.Timeout>();
+// Latest buffer per item: the timer writes this, so a `replaceLast` line that
+// arrives while a write is pending is not lost
+const pendingOutput = new Map<string, string>();
+
+function outputLogFile(id: string): string {
+  return join(OUTPUT_LOG_PATH, `${id}.log`);
+}
+
+function readOutputLog(id: string): string[] {
+  try {
+    return readFileSync(outputLogFile(id), "utf-8")
+      .split(/\r?\n/)
+      .filter((line) => line.length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function scheduleOutputWrite(id: string, content: string) {
+  pendingOutput.set(id, content);
+
+  if (pendingOutputWrites.has(id)) return;
+
+  pendingOutputWrites.set(
+    id,
+    setTimeout(() => {
+      pendingOutputWrites.delete(id);
+      const latest = pendingOutput.get(id) ?? "";
+      pendingOutput.delete(id);
+
+      try {
+        mkdirSync(OUTPUT_LOG_PATH, { recursive: true });
+        writeFileSync(outputLogFile(id), latest, "utf-8");
+      } catch {
+        // Non-fatal: the console just won't survive a restart
+      }
+    }, OUTPUT_WRITE_DELAY_MS),
+  );
+}
+
+function removeOutputLog(id: string) {
+  const pending = pendingOutputWrites.get(id);
+  if (pending) {
+    clearTimeout(pending);
+    pendingOutputWrites.delete(id);
+  }
+  pendingOutput.delete(id);
+
+  try {
+    rmSync(outputLogFile(id), { force: true });
+  } catch {
+    // Already gone
+  }
+}
+
+/** Deletes logs of items that are no longer in the queue. */
+function pruneOutputLogs(keep: Set<string>) {
+  try {
+    for (const file of readdirSync(OUTPUT_LOG_PATH)) {
+      const id = file.replace(/\.log$/, "");
+      if (!keep.has(id)) {
+        rmSync(join(OUTPUT_LOG_PATH, file), { force: true });
+      }
+    }
+  } catch {
+    // No log folder yet
+  }
 }
 
 /**
@@ -121,6 +206,12 @@ export const ProcessingStack = () => {
 
     const records = await loadQueueFromFile();
     records.forEach((record) => {
+      // Restore the console output of an item from the previous run
+      const storedOutput = readOutputLog(String(record.id));
+      if (storedOutput.length > 0) {
+        outputs.set(String(record.id), storedOutput);
+      }
+
       // Reset any items that were in-progress during a crash back to appropriate state
       if (
         record.status === "download" ||
@@ -134,6 +225,8 @@ export const ProcessingStack = () => {
 
       addItem(record);
     });
+
+    pruneOutputLogs(new Set(records.map((record) => String(record.id))));
 
     if (!queueManager.isPausedState()) {
       queueManager.processQueue();
@@ -166,6 +259,7 @@ export const ProcessingStack = () => {
     }
 
     notifyItemOutput(app, idString, getItemOutput(idString));
+    scheduleOutputWrite(idString, getItemOutput(idString));
   }
 
   async function addItem(item: ProcessingItemType, insertAtFront?: boolean) {
@@ -234,6 +328,7 @@ export const ProcessingStack = () => {
     dataMap.delete(id);
 
     outputs.delete(String(id));
+    removeOutputLog(String(id));
     await cleanFolder(item.id);
 
     queueManager.processQueue();
@@ -247,6 +342,7 @@ export const ProcessingStack = () => {
       const playlistId = (item as ProcessingItemWithPlaylist).playlistId;
       if (playlistId) deletePlaylist(playlistId, item.id);
       outputs.delete(String(item.id));
+      removeOutputLog(String(item.id));
       await cleanFolder(item.id);
     }
     data.length = 0;
@@ -262,6 +358,7 @@ export const ProcessingStack = () => {
     const removeIds = new Set(itemsToRemove.map((item) => item.id));
     for (const item of itemsToRemove) {
       outputs.delete(String(item.id));
+      removeOutputLog(String(item.id));
       dataMap.delete(item.id);
       await cleanFolder(item.id);
     }
