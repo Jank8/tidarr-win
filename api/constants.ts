@@ -1,7 +1,13 @@
-import { join } from "path";
+import { basename, join } from "path";
 
 // Native Windows layout: everything lives inside the project folder.
-export const ROOT_PATH = join(__dirname, "..");
+// In development this file runs from api/ (tsx), in production from
+// api/dist/ (compiled), so the project root is one or two levels up.
+const moduleDirectory = __dirname;
+export const ROOT_PATH =
+  basename(moduleDirectory) === "dist"
+    ? join(moduleDirectory, "..", "..")
+    : join(moduleDirectory, "..");
 
 // Config, auth tokens and queue
 export const CONFIG_PATH = join(ROOT_PATH, "userfiles", "shared");

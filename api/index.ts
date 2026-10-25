@@ -41,7 +41,10 @@ dotenv.config({
 });
 
 const port = parseInt(process.env.PORT || "8484", 10);
-const hostname = "0.0.0.0";
+// Loopback only by default: the API is unauthenticated unless ADMIN_PASSWORD is
+// set, so binding it to every interface would hand the Tidal token to the LAN.
+// Set HOST=0.0.0.0 when another machine (e.g. Lidarr) must reach it.
+const hostname = process.env.HOST || "127.0.0.1";
 
 const app: Express = express();
 
@@ -96,7 +99,7 @@ app.use("/api", lidarrRouter);
 
 checkConfig();
 
-const server = app.listen(port, async () => {
+const server = app.listen(port, hostname, async () => {
   const config = await configureServer();
   app.locals.config = config;
 

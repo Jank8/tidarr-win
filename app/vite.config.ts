@@ -5,17 +5,21 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true,
+    // Loopback by default: the API is local-only unless HOST is set, so
+    // exposing the UI on the LAN would give a broken page to other machines.
+    host: process.env.HOST || "127.0.0.1",
     cors: true,
     open: false,
     port: 3000,
     proxy: {
+      // 127.0.0.1 instead of localhost: the API binds loopback only, and
+      // "localhost" may resolve to ::1 first on Windows.
       "/api": {
-        target: "http://localhost:8484",
+        target: "http://127.0.0.1:8484",
         changeOrigin: true,
       },
       "/proxy": {
-        target: "http://localhost:8484",
+        target: "http://127.0.0.1:8484",
         changeOrigin: true,
       },
     },
