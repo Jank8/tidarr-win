@@ -5,7 +5,6 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "fs";
 import { basename, dirname, join } from "path";
@@ -37,12 +36,10 @@ import { logs } from "../processing/utils/logs";
  * - `only`  – nothing to do, stereo is not wanted.
  *
  * Albums, single tracks and playlists (including mixes, which are downloaded as
- * a temporary playlist) are supported. The stereo companion keeps tiddl's plain
- * file name — it is the copy a library scanner should treat as the track —
- * while the Atmos file is renamed with an ` (Atmos)` suffix. Both presentations
- * are therefore recognisable and can never collide; the only case that would
- * need a marker on the stereo copy is a library with further presentations
- * (5.1, 7.1), which Tidal does not expose here.
+ * a temporary playlist) are supported. The Atmos file keeps tiddl's plain name,
+ * so tiddl's `skip_existing` still recognises it on a re-download, while the
+ * stereo companion gets a ` (Stereo)` suffix before the extension. Both files
+ * are therefore distinguishable and can never collide.
  */
 
 const STEREO_SUFFIX = " (Stereo)";
@@ -274,50 +271,13 @@ function findTiddlFile(
 }
 
 /**
- * Marks the file tiddl downloaded as the Atmos one and returns where it lives,
- * so the stereo companion can be written next to it even when a custom template
- * put the files somewhere else.
+ * Locates the file tiddl downloaded for a track. The Atmos file keeps tiddl's
+ * plain name — that is what makes `skip_existing` work on a re-download — and
+ * the stereo companion is written next to it, even when a custom template put
+ * the files somewhere else.
  */
-function markAtmosFile(
-  base: string,
-  itemId: string,
-  title: string,
-): string | undefined {
-  const source = findTiddlFile(`${base}.m4a`, itemId);
-  if (!source) return undefined;
-
-  const target = source.replace(/\.m4a$/i, `${ATMOS_SUFFIX}.m4a`);
-
-  if (existsSync(target)) {
-    // A previous run already marked the file: tiddl downloaded the same track
-    // again because it looks for the unmarked name. Same size = same stream.
-    try {
-      if (statSync(source).size === statSync(target).size) {
-        rmSync(source, { force: true });
-        logs(itemId, `✅ [ATMOS] ${title}: duplicate Atmos file removed`);
-      } else {
-        logs(
-          itemId,
-          `⚠️ [ATMOS] ${title}: ${ATMOS_SUFFIX} file exists and differs, both kept`,
-        );
-      }
-    } catch {
-      // Leave the file alone when it cannot be inspected
-    }
-    return target;
-  }
-
-  try {
-    renameSync(source, target);
-    logs(itemId, `✅ [ATMOS] ${title}: Atmos file marked${ATMOS_SUFFIX}`);
-    return target;
-  } catch (error) {
-    logs(
-      itemId,
-      `⚠️ [ATMOS] ${title}: cannot rename Atmos file: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return source;
-  }
+function findAtmosFile(base: string, itemId: string): string | undefined {
+  return findTiddlFile(`${base}.m4a`, itemId);
 }
 
 function trackTags(track: TrackJson, album: AlbumJson): Record<string, string> {
@@ -476,15 +436,10 @@ export async function ensureStereoCompanions(
     const base = join(albumDirectory(item.id, album), trackSegment(track));
 
     try {
-      // Mark the file tiddl saved and learn where it actually sits
-      const atmosFile = markAtmosFile(base, item.id, track.title);
+      // Where tiddl actually put the Atmos file (custom templates may move it)
+      const atmosFile = findAtmosFile(base, item.id);
       const fileBase = atmosFile
-        ? join(
-            dirname(atmosFile),
-            basename(atmosFile)
-              .replace(/\.m4a$/i, "")
-              .replace(/ \(Atmos\)$/i, ""),
-          )
+        ? join(dirname(atmosFile), basename(atmosFile).replace(/\.m4a$/i, ""))
         : base;
 
       const stereo = await getTrackStream(track.id, quality, false);
@@ -492,18 +447,17 @@ export async function ensureStereoCompanions(
       if (stereo?.audioMode === "STEREO") {
         const { urls, codecs } = parseManifest(stereo);
         const extension = extensionFor(stereo, codecs);
-        // Plain name: this is the copy a library scanner should treat as the track
-        const file = `${fileBase}${extension}`;
+        const file = `${fileBase}${STEREO_SUFFIX}${extension}`;
 
         if (existsSync(file)) {
           logs(item.id, `✅ [ATMOS] ${track.title}: stereo already present`);
           continue;
         }
 
-        // Files written by 1.1.6 and older had a ` (Stereo)` suffix
-        const legacy = `${fileBase}${STEREO_SUFFIX}${extension}`;
-        if (existsSync(legacy)) {
-          renameSync(legacy, file);
+        // Companion written by 1.1.7/1.1.8 with the plain name
+        const plain = `${fileBase}${extension}`;
+        if (existsSync(plain)) {
+          renameSync(plain, file);
           logs(
             item.id,
             `✅ [ATMOS] ${track.title}: stereo file renamed to "${basename(file)}"`,
@@ -545,7 +499,7 @@ export async function ensureStereoCompanions(
       const { urls, codecs } = parseManifest(atmos);
       const buffer = await downloadUrls(urls);
       const extension = extensionFor(atmos, codecs);
-      const file = `${fileBase}${ATMOS_SUFFIX}${extension}`;
+      const file = `${fileBase}${extension}`;
       await writeAudioFile(file, buffer, trackTags(track, album));
 
       added += 1;
