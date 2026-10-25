@@ -1,5 +1,5 @@
 import { spawn } from "child_process";
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 
 import { PROCESSING_PATH, TIDAL_API_URL } from "../../constants";
@@ -29,10 +29,12 @@ import { logs } from "../processing/utils/logs";
  * - `only`  – nothing to do, stereo is not wanted.
  *
  * Stereo companions keep tiddl's naming with a ` (Stereo)` suffix before the
- * extension, so they never collide with the Atmos `.m4a` file.
+ * extension, and the Atmos file tiddl downloaded is renamed with an ` (Atmos)`
+ * suffix, so both presentations are recognisable and never collide.
  */
 
 const STEREO_SUFFIX = " (Stereo)";
+const ATMOS_SUFFIX = " (Atmos)";
 
 const QUALITY_MAP: Record<string, string> = {
   low: "LOW",
@@ -219,7 +221,49 @@ async function writeAudioFile(
 }
 
 function existingAudioFile(base: string): string | undefined {
-  return [".flac", ".m4a"].map((ext) => `${base}${ext}`).find(existsSync);
+  return [`${base}.flac`, `${base}.m4a`, `${base}${ATMOS_SUFFIX}.m4a`].find(
+    existsSync,
+  );
+}
+
+/**
+ * Marks the file tiddl downloaded as the Atmos one, so both presentations are
+ * recognisable in the library (`... (Atmos).m4a` / `... (Stereo).flac`).
+ */
+function markAtmosFile(base: string, itemId: string, title: string): void {
+  const source = `${base}.m4a`;
+  const target = `${base}${ATMOS_SUFFIX}.m4a`;
+
+  if (!existsSync(source)) return;
+
+  if (existsSync(target)) {
+    // A previous run already marked the file: tiddl downloaded the same track
+    // again because it looks for the unmarked name. Same size = same stream.
+    try {
+      if (statSync(source).size === statSync(target).size) {
+        rmSync(source, { force: true });
+        logs(itemId, `✅ [ATMOS] ${title}: duplicate Atmos file removed`);
+      } else {
+        logs(
+          itemId,
+          `⚠️ [ATMOS] ${title}: ${ATMOS_SUFFIX} file exists and differs, both kept`,
+        );
+      }
+    } catch {
+      // Leave the file alone when it cannot be inspected
+    }
+    return;
+  }
+
+  try {
+    renameSync(source, target);
+    logs(itemId, `✅ [ATMOS] ${title}: Atmos file marked${ATMOS_SUFFIX}`);
+  } catch (error) {
+    logs(
+      itemId,
+      `⚠️ [ATMOS] ${title}: cannot rename Atmos file: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 function trackTags(track: TrackJson, album: AlbumJson): Record<string, string> {
@@ -342,6 +386,10 @@ export async function ensureStereoCompanions(
     const base = join(albumDirectory, trackSegment(track));
 
     try {
+      // tiddl saved the Atmos stream under the regular track name; mark it so
+      // the two presentations are distinguishable in the library
+      markAtmosFile(base, item.id, track.title);
+
       const stereo = await getTrackStream(track.id, quality, false);
 
       if (stereo?.audioMode === "STEREO") {
@@ -381,7 +429,7 @@ export async function ensureStereoCompanions(
       }
 
       const { buffer, extension } = await downloadStream(atmos);
-      const file = `${base}${extension}`;
+      const file = `${base}${ATMOS_SUFFIX}${extension}`;
       await writeAudioFile(file, buffer, trackTags(track, album));
 
       added += 1;
