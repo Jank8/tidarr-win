@@ -5,6 +5,8 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
+const CLEAN_FOLDER_ATTEMPTS = 3;
+
 import { NZB_DOWNLOAD_PATH, PROCESSING_PATH } from "../../../constants";
 import { getAppInstance } from "../../helpers/app-instance";
 import { ProcessingItemType } from "../../types";
@@ -120,28 +122,42 @@ export async function cleanFolder(
     processingPath = NZB_DOWNLOAD_PATH;
   }
 
-  try {
-    if (itemId) {
-      const targetPath = path.join(processingPath, String(itemId));
-      if (fs.existsSync(targetPath)) {
-        removeRecursive(targetPath);
-      }
-    } else {
-      // Wipe all entries inside the processing folder without removing the folder itself
-      if (fs.existsSync(processingPath)) {
-        for (const entry of fs.readdirSync(processingPath)) {
-          removeRecursive(path.join(processingPath, entry));
+  const targetPath = itemId ? path.join(processingPath, String(itemId)) : null;
+  const label = itemId ? ` (item: ${itemId})` : "";
+
+  // Windows refuses to delete files that another process still holds (a killed
+  // tiddl, an indexer or an antivirus scan). Retry briefly before giving up.
+  for (let attempt = 1; attempt <= CLEAN_FOLDER_ATTEMPTS; attempt++) {
+    try {
+      if (targetPath) {
+        if (fs.existsSync(targetPath)) {
+          removeRecursive(targetPath);
+        }
+      } else {
+        // Wipe all entries inside the processing folder without removing the folder itself
+        if (fs.existsSync(processingPath)) {
+          for (const entry of fs.readdirSync(processingPath)) {
+            removeRecursive(path.join(processingPath, entry));
+          }
         }
       }
+
+      console.log(`🧹 [TIDARR] Cleaned up processing folder${label}`);
+      return "finished";
+    } catch (error) {
+      if (attempt === CLEAN_FOLDER_ATTEMPTS) {
+        console.log(
+          `❌ [TIDARR] Cannot clean ${targetPath ?? processingPath}${label} after ${CLEAN_FOLDER_ATTEMPTS} attempts` +
+            ` (${error instanceof Error ? error.message : String(error)})`,
+        );
+        return "error";
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
-    console.log(
-      `🧹 [TIDARR] Cleaned up processing folder${itemId ? ` (item: ${itemId})` : ""}`,
-    );
-    return "finished";
-  } catch (e) {
-    console.log(`❌ [TIDARR] Error cleaning folder:`, e);
-    return "error";
   }
+
+  return "error";
 }
 
 export async function hasFileToMove(pathArg?: string): Promise<boolean> {

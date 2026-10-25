@@ -44,6 +44,19 @@ export function gracefulShutdown(signal: string, app: Express, server: Server) {
     `[INFO] Closing ${totalItemConnections} item output SSE connections...`,
   );
 
+  // Stop the downloads started by this instance: on Windows a child does not
+  // die with its parent, and an orphaned tiddl keeps writing into .processing.
+  const runningItems = app.locals.processingStack?.data ?? [];
+  for (const item of runningItems) {
+    if (!item?.process || item.process.killed) continue;
+
+    try {
+      item.process.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+
   // Close the server
   server.close(() => {
     console.log("[INFO] HTTP server closed");

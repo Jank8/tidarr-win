@@ -9,6 +9,7 @@ import { checkConfig } from "./src/helpers/check-config";
 import { get_tiddl_config } from "./src/helpers/get_tiddl_config";
 import { gracefulShutdown } from "./src/helpers/gracefull_shutdown";
 import { logExpiresToken } from "./src/helpers/refresh-token";
+import { killStaleTiddlProcesses } from "./src/helpers/stale-processes";
 import { ProcessingStack } from "./src/processing/core/processing-manager";
 import { cleanFolder } from "./src/processing/utils/jobs";
 import { setupJellyfinProxy } from "./src/proxies/jellyfin";
@@ -106,6 +107,15 @@ const server = app.listen(port, hostname, async () => {
   // Load tiddl config on startup
   const { config: tiddlConfig } = get_tiddl_config();
   app.locals.tiddlConfig = tiddlConfig;
+
+  // Kill tiddl children left behind by a previous instance that was killed
+  // without a graceful shutdown; they would keep writing into .processing
+  const staleTiddl = killStaleTiddlProcesses();
+  if (staleTiddl.length > 0) {
+    console.log(
+      `🧹 [TIDARR] Stopped ${staleTiddl.length} stale tiddl process(es): ${staleTiddl.join(", ")}`,
+    );
+  }
 
   // Clean up all processing folders
   await cleanFolder();
