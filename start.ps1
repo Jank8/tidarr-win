@@ -550,6 +550,13 @@ function Stop-DevTree {
     }
 }
 
+# Keep the console readable.
+# npm exports FORCE_COLOR for its scripts, so a NO_COLOR inherited from the
+# terminal makes every node child print a warning about the conflict; and Vite 8
+# warns about the CommonJS config loader unless this variable is set.
+Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
+$env:VITE_CONFIG_NATIVE_IGNORE_WARNING = "true"
+
 Write-Host " Press Ctrl+C to stop Tidarr."
 $devProcess = Start-Process -FilePath "cmd.exe" `
     -ArgumentList "/c cd /d `"$root`" && pnpm dev" `

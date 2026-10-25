@@ -23,9 +23,9 @@
     "ws": "^8.22.0"
   },
   "scripts": {
-    "build": "npx tsc --project ./tsconfig.json",
-    "start": "npx tsx --watch index.ts",
+    "build": "tsc --project ./tsconfig.json",
+    "start": "tsx --watch index.ts",
     "prod": "node ./dist/index.js",
-    "depcheck": "npx depcheck"
+    "depcheck": "depcheck"
   }
 }
