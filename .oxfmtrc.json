@@ -7,8 +7,6 @@
     "**/public",
     "**/playwright-report",
     "**/dist",
-    "docker/mnt",
-    "e2e/tests/mocks",
     "**/tsconfig*.json"
   ]
 }

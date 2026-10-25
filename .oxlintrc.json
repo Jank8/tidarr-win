@@ -13,8 +13,7 @@
     "**/node_modules",
     "**/public",
     "**/playwright-report",
-    "**/dist",
-    "docker/mnt"
+    "**/dist"
   ],
   "rules": {
     "react-hooks/rules-of-hooks": "error",

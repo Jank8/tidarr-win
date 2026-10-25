@@ -1,8 +1,0 @@
-node_modules/
-/test-results/
-/playwright-report/
-/blob-report/
-/playwright/.cache/
-/snapshots/*/*-darwin.png
-custom.css
-.env.e2e.local
