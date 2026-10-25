@@ -45,6 +45,9 @@ import { logs } from "../processing/utils/logs";
 const STEREO_SUFFIX = " (Stereo)";
 const ATMOS_SUFFIX = " (Atmos)";
 
+// Small pause between tracks so a long playlist does not burst the API
+const COMPANION_DELAY_MS = 250;
+
 const QUALITY_MAP: Record<string, string> = {
   low: "LOW",
   normal: "HIGH",
@@ -190,9 +193,20 @@ async function getTrackStream(
       `&immersiveaudio=${immersive ? "true" : "false"}`,
   );
 
+  // Stop the pass instead of adding more requests to an exhausted quota
+  if (response.status === 429) throw new RateLimitError();
+
   if (!response.ok) return null;
 
   return (await response.json()) as TrackStreamJson;
+}
+
+/** Tidal answered 429 — the whole pass has to stop, not just this track. */
+class RateLimitError extends Error {
+  constructor() {
+    super("Tidal rate limit (429)");
+    this.name = "RateLimitError";
+  }
 }
 
 /** Writes basic tags with ffmpeg; a failure leaves the untagged file in place. */
@@ -432,7 +446,11 @@ export async function ensureStereoCompanions(
 
   let added = 0;
 
-  for (const { track, album } of atmosEntries) {
+  for (const [index, { track, album }] of atmosEntries.entries()) {
+    if (index > 0) {
+      await new Promise((resolve) => setTimeout(resolve, COMPANION_DELAY_MS));
+    }
+
     const base = join(albumDirectory(item.id, album), trackSegment(track));
 
     try {
@@ -508,6 +526,14 @@ export async function ensureStereoCompanions(
         `✅ [ATMOS] ${track.title}: no stereo version, kept Dolby Atmos (${extension}, ${atmos.audioQuality ?? "?"})`,
       );
     } catch (error) {
+      if (error instanceof RateLimitError) {
+        logs(
+          item.id,
+          "⏳ [ATMOS] Tidal rate limit (429) reached — stopping the stereo pass. Re-run the item later to fetch the remaining companions.",
+        );
+        break;
+      }
+
       const message = error instanceof Error ? error.message : String(error);
       logs(item.id, `⚠️ [ATMOS] ${track.title}: ${message}`);
     }
