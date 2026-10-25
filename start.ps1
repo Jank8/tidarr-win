@@ -140,6 +140,94 @@ function Get-TiddlRelease {
     }
 }
 
+function Add-ToPath {
+    # Make a tool folder visible now and in future sessions (the API spawns
+    # binaries by name, so PATH is what matters).
+    param([string]$Directory)
+    if (-not $Directory) { return }
+    $onPath = ($env:PATH -split ';') | Where-Object { $_.TrimEnd('\') -ieq $Directory.TrimEnd('\') }
+    if (-not $onPath) { $env:PATH = "$Directory;$env:PATH" }
+
+    $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
+    $persisted = ($userPath -split ';') | Where-Object { $_.TrimEnd('\') -ieq $Directory.TrimEnd('\') }
+    if (-not $persisted) {
+        [System.Environment]::SetEnvironmentVariable("PATH", "$Directory;$userPath", "User")
+    }
+}
+
+function Get-Setting {
+    # Reads a flag from the environment first, then from .env (like dotenv).
+    param([string]$Key)
+    $value = [System.Environment]::GetEnvironmentVariable($Key)
+    if ($value) { return $value }
+    $envFile = Join-Path $root ".env"
+    if (Test-Path $envFile) {
+        foreach ($line in Get-Content $envFile) {
+            if ($line -match "^\s*$([regex]::Escape($Key))\s*=\s*(.*)$") {
+                return $Matches[1].Trim().Trim('"').Trim("'")
+            }
+        }
+    }
+    return ""
+}
+
+function Get-BeetsPackageSpec {
+    # beets extras change between releases (e.g. advancedrewrite disappeared in
+    # 2.x), so ask PyPI which ones this release actually provides.
+    $wanted = @("fetchart", "lastgenre", "lastimport")
+    try {
+        $pypi = Invoke-RestMethod -Uri "https://pypi.org/pypi/beets/json" -TimeoutSec 8 -UseBasicParsing
+        $available = @($pypi.info.provides_extra)
+        if ($available.Count -gt 0) {
+            $valid = $wanted | Where-Object { $available -contains $_ }
+            if ($valid) { return "beets[$($valid -join ',')]" }
+        }
+    } catch {}
+    return "beets"
+}
+
+function Install-Rsgain {
+    # rsgain has no winget package: fetch the portable win64 build from GitHub.
+    Write-Host "  Installing rsgain (REPLAY_GAIN)..."
+    $destination = Join-Path $root "tools\rsgain"
+    $zip = Join-Path $env:TEMP "rsgain-win64.zip"
+    $extract = Join-Path $env:TEMP "rsgain-extract"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/complexlogic/rsgain/releases/latest" -TimeoutSec 20 -UseBasicParsing
+        $asset = $release.assets | Where-Object { $_.name -like "*win64.zip" } | Select-Object -First 1
+        if (-not $asset) { throw "no win64 asset in $($release.tag_name)" }
+
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
+        if (Test-Path $extract) { Remove-Item $extract -Recurse -Force }
+        Expand-Archive -Path $zip -DestinationPath $extract -Force
+
+        if (Test-Path $destination) { Remove-Item $destination -Recurse -Force }
+        # Move-Item cannot create intermediate folders, so make tools/ first.
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+        $inner = Get-ChildItem $extract -Directory | Select-Object -First 1
+        if ($inner) {
+            Move-Item $inner.FullName $destination
+        } else {
+            New-Item -ItemType Directory -Path $destination -Force | Out-Null
+            Move-Item (Join-Path $extract "*") $destination
+        }
+
+        if (-not (Test-Path (Join-Path $destination "rsgain.exe"))) {
+            throw "rsgain.exe missing after extraction"
+        }
+
+        Add-ToPath $destination
+        Write-Host "  rsgain $($release.tag_name) OK" -ForegroundColor Green
+    } catch {
+        Write-Host "  WARNING: rsgain install failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "  REPLAY_GAIN will not work until rsgain.exe is on PATH." -ForegroundColor Yellow
+    } finally {
+        Remove-Item $zip -Force -ErrorAction SilentlyContinue
+        Remove-Item $extract -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ── which tiddl does the launcher target? ───────────────────────────────────
 $release = Get-TiddlRelease
 if ($env:TIDARR_TIDDL_VERSION) {
@@ -228,12 +316,7 @@ if ($expectedTiddl -and (Test-Path $expectedTiddl)) {
     if (-not $resolved -or ($resolved -ine $expectedTiddl)) {
         $env:PATH = "$scriptsDir;$env:PATH"
     }
-
-    $userPath = [System.Environment]::GetEnvironmentVariable("PATH", "User")
-    $persisted = ($userPath -split ';') | Where-Object { $_.TrimEnd('\') -ieq $scriptsDir.TrimEnd('\') }
-    if (-not $persisted) {
-        [System.Environment]::SetEnvironmentVariable("PATH", "$scriptsDir;$userPath", "User")
-    }
+    Add-ToPath $scriptsDir
 }
 
 $isLatest = $release -and ($tiddlInstalled -eq $release.Version)
@@ -262,6 +345,37 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
     Write-Host "  ffmpeg OK" -ForegroundColor Green
 } else {
     Write-Host "  WARNING: ffmpeg not in PATH. Audio conversion may not work." -ForegroundColor Yellow
+}
+
+# ── 3b. optional tools (installed only when their feature is enabled) ───────
+if ((Get-Setting "ENABLE_BEETS") -eq "true") {
+    Write-Host "  Checking beets (ENABLE_BEETS)..."
+    if (Get-Command beet -ErrorAction SilentlyContinue) {
+        Write-Host "  beets OK" -ForegroundColor Green
+    } else {
+        $beetsSpec = Get-BeetsPackageSpec
+        Write-Host "  Installing $beetsSpec..."
+        Invoke-Py $py.Command @("-m", "pip", "install", "--upgrade", "--no-warn-script-location", "--quiet", $beetsSpec)
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Plugin install failed, trying plain beets..." -ForegroundColor Yellow
+            Invoke-Py $py.Command @("-m", "pip", "install", "--upgrade", "--no-warn-script-location", "--quiet", "beets")
+        }
+        if ($LASTEXITCODE -eq 0 -and (Get-Command beet -ErrorAction SilentlyContinue)) {
+            Write-Host "  beets OK" -ForegroundColor Green
+        } else {
+            Write-Host "  WARNING: beets install failed. ENABLE_BEETS will not work." -ForegroundColor Yellow
+            Write-Host "  Try: $scriptsDir\pip install beets" -ForegroundColor Yellow
+        }
+    }
+}
+
+if ((Get-Setting "REPLAY_GAIN") -eq "true") {
+    Write-Host "  Checking rsgain (REPLAY_GAIN)..."
+    if (Get-Command rsgain -ErrorAction SilentlyContinue) {
+        Write-Host "  rsgain OK" -ForegroundColor Green
+    } else {
+        Install-Rsgain
+    }
 }
 
 # ── 4. Node dependencies ─────────────────────────────────────────────────────

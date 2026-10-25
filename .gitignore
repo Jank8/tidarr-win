@@ -22,3 +22,6 @@ CONTEXT.md
 # native Windows run: config, auth tokens, queue and downloads
 /userfiles
 /userfiles/music
+
+# portable tools downloaded by the launcher
+/tools

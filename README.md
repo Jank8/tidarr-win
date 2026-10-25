@@ -83,6 +83,20 @@ uninstall.cmd   → removes Node.js, Python, tiddl, ffmpeg (music is kept)
 - The download path can be changed in Settings → Config
 - `userfiles\` is gitignored, so your credentials and music are never committed
 
+## Optional features
+
+Two features need an external tool. Turn the flag on in `.env` and run
+`start.cmd` again — the launcher installs the tool itself, no manual setup:
+
+| flag in `.env` | tool | what it does |
+|---|---|---|
+| `ENABLE_BEETS=true` | beets (+ fetchart, lastgenre, lastimport, advancedrewrite plugins) | tags and renames downloads using `userfiles\shared\beets-config.yml` |
+| `REPLAY_GAIN=true` | rsgain | writes ReplayGain tags into the downloaded files |
+
+beets is installed with pip into the same Python as tiddl; rsgain is a portable
+build downloaded into `tools\rsgain` and added to PATH. Nothing is installed
+while the flag is off, so a default install stays small.
+
 ## Troubleshooting
 
 **`ERROR: No matching distribution found for tiddl==…`**
