@@ -70,15 +70,11 @@ export async function beets(id: string): Promise<void> {
       console.log("🎧 BEETS             ");
       console.log("--------------------");
 
-      await spawnBeet(item.id, "import", ["-qC", itemProcessingPath]);
+      await spawnBeet(item.id, "import", ["-q", "-C", "-w", itemProcessingPath]);
 
-      // Run beet write after import
-      logs(item.id, "🕖 [BEETS] Writing tags ...", { skipConsole: true });
-      console.log("--------------------");
-      console.log("🏷️  BEETS WRITE      ");
-      console.log("--------------------");
-
-      await spawnBeet(item.id, "write", [itemProcessingPath]);
+      // No separate `beet write` here: import already writes the tags (-w), and
+      // the library stores the `.processing` paths, which Tidarr deletes right
+      // after the move — a later write would query paths that no longer exist.
     }
   } catch (err: unknown) {
     logs(
