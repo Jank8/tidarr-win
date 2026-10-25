@@ -1,9 +1,5 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# project
-/library
-/shared
-/docker/mnt
 # dependencies
 /node_modules
 .pnpm-store
@@ -20,12 +16,9 @@ AGENT.md
 CLAUDE.md
 CONTEXT.md
 
-# docker
-compose.override.yml
-
 # typescript
 *.tsbuildinfo
 
-# native Windows run
+# native Windows run: config, auth tokens, queue and downloads
 /userfiles
-
+/userfiles/music
