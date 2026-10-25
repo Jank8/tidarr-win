@@ -16,12 +16,13 @@ import {
 
 import { useApiFetcher } from "./ApiFetcherProvider";
 
-// Compare two version strings (e.g., "v1.1.3" vs "v1.1.7")
+// Compare two version strings (e.g., "v1.1.3" vs "v1.1.7", "win-1.1.0")
 // Returns: -1 if a < b, 0 if a == b, 1 if a > b
 function compareVersions(a: string, b: string): number {
   const parseVersion = (v: string) =>
     v
-      .replace(/^v/, "")
+      // drop any non-numeric prefix: "v", "win-", "release-"
+      .replace(/^[^\d]*/, "")
       .split(".")
       .map((n) => parseInt(n, 10) || 0);
 

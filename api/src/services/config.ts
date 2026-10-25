@@ -1,5 +1,25 @@
-import { SYNC_DEFAULT_CRON } from "../../constants";
+import { readFileSync } from "fs";
+import { join } from "path";
+
+import { ROOT_PATH, SYNC_DEFAULT_CRON } from "../../constants";
 import { initializeFiles } from "../helpers/initialize-server";
+
+/**
+ * Version reported by the API (footer, update check, changelog dialog).
+ * VERSION still wins, so a release pipeline can override it; otherwise the
+ * version comes from the repository's package.json.
+ */
+function getAppVersion(): string {
+  if (process.env.VERSION) return process.env.VERSION;
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT_PATH, "package.json"), "utf-8"),
+    ) as { version?: string };
+    return pkg.version ?? "";
+  } catch {
+    return "";
+  }
+}
 
 export async function configureServer() {
   console.log(`---------------------`);
@@ -39,7 +59,7 @@ export async function configureServer() {
       PUID: process.env.PUID || "",
       PGID: process.env.PGID || "",
       UMASK: process.env.UMASK || "",
-      TIDARR_VERSION: process.env.VERSION || "",
+      TIDARR_VERSION: getAppVersion(),
       APPRISE_API_ENDPOINT: process.env.APPRISE_API_ENDPOINT || "",
       APPRISE_API_TAG: process.env.APPRISE_API_TAG || "",
       PUSH_OVER_URL: process.env.PUSH_OVER_URL || "",

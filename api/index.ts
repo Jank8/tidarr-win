@@ -136,7 +136,8 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT", app, server));
 // fallback load app (prod mode: serve built frontend)
 
 import { ROOT_PATH } from "./constants";
-const frontendFiles = path.join(ROOT_PATH, "app", "build");
+// `pnpm app-build` writes app/dist (the container image copies it to app/build)
+const frontendFiles = path.join(ROOT_PATH, "app", "dist");
 if (fs.existsSync(frontendFiles)) {
   app.use(express.static(frontendFiles));
   app.get("/{*any}", (_, res) => {

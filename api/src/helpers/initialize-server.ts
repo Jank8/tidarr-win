@@ -7,7 +7,7 @@ export function initializeFiles(): string {
   const output: string[] = [];
   // Config templates ship in the top-level settings/ folder.
   const SETTINGS_URL = join(ROOT_PATH, "settings");
-  const PUBLIC_URL = join(ROOT_PATH, "app", "build");
+  const PUBLIC_URL = join(ROOT_PATH, "app", "dist");
   const DEV_PUBLIC_URL = join(ROOT_PATH, "app", "public");
   const SHARED_URL = CONFIG_PATH;
 
