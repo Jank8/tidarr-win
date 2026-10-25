@@ -1,8 +1,12 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+import { createQuietLogger } from "./vite-quiet-logger";
+
 // https://vite.dev/config/
 export default defineConfig({
+  // Drops the proxy stack traces Vite prints while the API restarts
+  customLogger: createQuietLogger(),
   plugins: [react()],
   server: {
     // Loopback by default: the API is local-only unless HOST is set, so
