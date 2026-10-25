@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "child_process";
 import { Express, Request, Response } from "express";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 
 import {
@@ -17,6 +18,24 @@ import { classifyTiddlLine, isRateLimitedLine } from "./tiddl-error-patterns";
 // Constants
 const TIDDL_BINARY = "tiddl";
 const PROGRESS_UPDATE_THROTTLE_MS = 2000;
+// How long tiddl may stay silent before the item console gets a status line
+const HEARTBEAT_INTERVAL_MS = 15_000;
+
+/** Number of files already written under the item's processing folder. */
+function countFiles(directory: string, depth = 0): number {
+  if (depth > 6 || !existsSync(directory)) return 0;
+
+  let count = 0;
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      count += countFiles(join(directory, entry.name), depth + 1);
+    } else {
+      count += 1;
+    }
+  }
+
+  return count;
+}
 
 // Resource mapping for favorite types
 const FAVORITE_TYPE_TO_RESOURCE: Record<string, string> = {
@@ -151,7 +170,31 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   let rateLimited = false;
   let lastProgressUpdate = 0;
 
+  // A favourites-by-artist run first expands the artist list and their
+  // discographies, which can take minutes without a single line of output.
+  // Report that the process is alive and how many files already landed.
+  const startedAt = Date.now();
+  let lastActivity = startedAt;
+  const itemDirectory = join(PROCESSING_PATH, String(item.id));
+
+  const heartbeat = setInterval(() => {
+    if (Date.now() - lastActivity < HEARTBEAT_INTERVAL_MS) return;
+
+    lastActivity = Date.now();
+    const elapsed = Math.round((Date.now() - startedAt) / 1000);
+    const minutes = Math.floor(elapsed / 60);
+    const seconds = String(elapsed % 60).padStart(2, "0");
+
+    logs(
+      item.id,
+      `⏳ [TIDDL] still working — ${countFiles(itemDirectory)} file(s), ${minutes}m${seconds}s elapsed`,
+    );
+  }, HEARTBEAT_INTERVAL_MS);
+
+  const stopHeartbeat = () => clearInterval(heartbeat);
+
   child.stdout?.on("data", (data: string) => {
+    lastActivity = Date.now();
     const lines = data?.split("\r");
     const classifiedLines = lines.map(
       (line) => [line, classifyTiddlLine(line)] as const,
@@ -225,6 +268,8 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   });
 
   child.on("close", async (code) => {
+    stopHeartbeat();
+
     const currentOutput = app.locals.processingStack.actions.getItemOutput(
       item.id,
     );
@@ -252,11 +297,14 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
 
   child.stderr?.setEncoding("utf8");
   child.stderr?.on("data", (data) => {
+    lastActivity = Date.now();
     logs(item.id, `❌ [TIDDL]: ${data}`);
     hasProcessingError = true;
   });
 
   child.on("error", (err) => {
+    stopHeartbeat();
+
     if (err) {
       logs(item.id, `❌ [TIDDL] Error: ${err}`);
       item["status"] = "error";
