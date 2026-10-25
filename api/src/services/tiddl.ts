@@ -1,6 +1,13 @@
 import { spawn, spawnSync } from "child_process";
 import { Express, Request, Response } from "express";
-import { existsSync, readdirSync } from "fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readSync,
+  statSync,
+} from "fs";
 import { join } from "path";
 
 import {
@@ -20,6 +27,9 @@ const TIDDL_BINARY = "tiddl";
 const PROGRESS_UPDATE_THROTTLE_MS = 2000;
 // How long tiddl may stay silent before the item console gets a status line
 const HEARTBEAT_INTERVAL_MS = 15_000;
+// tiddl keeps its own debug log next to auth.json; its last line says what the
+// process is working on right now
+const TIDDL_LOG_FILE = join(CONFIG_PATH, ".tiddl", "latest.log");
 
 /** Number of files already written under the item's processing folder. */
 function countFiles(directory: string, depth = 0): number {
@@ -35,6 +45,44 @@ function countFiles(directory: string, depth = 0): number {
   }
 
   return count;
+}
+
+/**
+ * Last line of tiddl's debug log together with its age: the heartbeat uses it to
+ * show which API call the process is on, and how long ago it logged anything.
+ */
+function readTiddlLogTail(): { message: string; ageMs: number } | null {
+  try {
+    const { size } = statSync(TIDDL_LOG_FILE);
+    if (size === 0) return null;
+
+    const length = Math.min(size, 8192);
+    const buffer = Buffer.alloc(length);
+    const fd = openSync(TIDDL_LOG_FILE, "r");
+    readSync(fd, buffer, 0, length, size - length);
+    closeSync(fd);
+
+    const lines = buffer
+      .toString("utf-8")
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0);
+    const line = lines[lines.length - 1];
+    if (!line) return null;
+
+    const match = line.match(
+      /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),(\d{3})\s+\w+\s+\[[^\]]*\]\s*(.*)$/,
+    );
+    if (!match) return { message: line, ageMs: 0 };
+
+    const timestamp = new Date(`${match[1].replace(" ", "T")}.${match[2]}`);
+    const ageMs = Number.isNaN(timestamp.getTime())
+      ? 0
+      : Date.now() - timestamp.getTime();
+
+    return { message: match[3], ageMs: Math.max(0, ageMs) };
+  } catch {
+    return null;
+  }
 }
 
 // Resource mapping for favorite types
@@ -168,6 +216,7 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   let hasProcessingError = false;
   let hasNetworkError = false;
   let rateLimited = false;
+  let authFailed = false;
   let lastProgressUpdate = 0;
 
   // A favourites-by-artist run first expands the artist list and their
@@ -184,11 +233,49 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
     const elapsed = Math.round((Date.now() - startedAt) / 1000);
     const minutes = Math.floor(elapsed / 60);
     const seconds = String(elapsed % 60).padStart(2, "0");
+    const tail = readTiddlLogTail();
 
-    logs(
-      item.id,
-      `⏳ [TIDDL] still working — ${countFiles(itemDirectory)} file(s), ${minutes}m${seconds}s elapsed`,
-    );
+    const details = [
+      `${countFiles(itemDirectory)} file(s)`,
+      `${minutes}m${seconds}s elapsed`,
+    ];
+
+    if (tail) {
+      const ageMinutes = Math.floor(tail.ageMs / 60_000);
+      const excerpt =
+        tail.message.length > 90
+          ? `${tail.message.slice(0, 90)}…`
+          : tail.message;
+      details.push(
+        `last: ${excerpt}${ageMinutes >= 1 ? ` (${ageMinutes}m ago)` : ""}`,
+      );
+    }
+
+    logs(item.id, `⏳ [TIDDL] still working — ${details.join(", ")}`);
+
+    // A rejected token refresh cannot recover on its own: keep the run from
+    // hanging for hours on a session that needs to be renewed.
+    if (
+      !authFailed &&
+      tail &&
+      tail.message.includes("403") &&
+      tail.message.includes("oauth2/token")
+    ) {
+      authFailed = true;
+      hasProcessingError = true;
+      hasNetworkError = false;
+
+      logs(
+        item.id,
+        "🔑 [TIDDL] Tidal rejected the token refresh (403) — the login expired. Re-authenticate it in Parameters → Revoke Tidal token, then start the download again.",
+      );
+
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
   }, HEARTBEAT_INTERVAL_MS);
 
   const stopHeartbeat = () => clearInterval(heartbeat);
@@ -283,6 +370,19 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
     } else {
       logs(item.id, `❌ [TIDDL] Tiddl process exited with code ${code})`);
       hasProcessingError = true;
+
+      // The refresh token was rejected: no download can succeed until the
+      // login is renewed.
+      if (
+        !authFailed &&
+        currentOutput.includes("oauth2/token") &&
+        currentOutput.includes("403")
+      ) {
+        logs(
+          item.id,
+          "🔑 [TIDDL] Tidal rejected the token refresh (403) — the login expired. Re-authenticate in Parameters → Revoke Tidal token, then run the download again.",
+        );
+      }
     }
 
     item["status"] = hasProcessingError ? "error" : item["status"];
