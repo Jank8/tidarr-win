@@ -26,6 +26,45 @@ const FAVORITE_TYPE_TO_RESOURCE: Record<string, string> = {
   favorite_artists: "artist",
 };
 
+/**
+ * Build the env for tiddl spawns.
+ * On Windows tiddl uses HOME (or USERPROFILE) to locate ~/.tiddl/
+ * We point it at CONFIG_PATH so tidarr and tiddl share the same directory.
+ * We also ensure the full system+user PATH is available so ffmpeg is found.
+ */
+function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
+  // On Windows, merge Machine + User PATH to ensure ffmpeg and other tools are found
+  // even when Node.js was started from a CMD session with incomplete PATH
+  let resolvedPath = process.env.PATH || "";
+  if (process.platform === "win32") {
+    try {
+      const { execSync } = require("child_process");
+      const machinePath = execSync(
+        'reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v PATH',
+        { encoding: "utf-8" }
+      ).match(/PATH\s+REG_\w+\s+(.*)/)?.[1]?.trim() || "";
+      const userPath = execSync(
+        'reg query "HKCU\\Environment" /v PATH',
+        { encoding: "utf-8" }
+      ).match(/PATH\s+REG_\w+\s+(.*)/)?.[1]?.trim() || "";
+      resolvedPath = `${machinePath};${userPath};${resolvedPath}`;
+    } catch {
+      // fallback to current PATH
+    }
+  }
+
+  return {
+    ...process.env,
+    PATH: resolvedPath,
+    // Force tiddl to store auth/config inside CONFIG_PATH/.tiddl/
+    HOME: CONFIG_PATH,
+    USERPROFILE: CONFIG_PATH,
+    // Force Python/rich to use UTF-8 encoding on Windows (fixes UnicodeEncodeError with spinner chars)
+    PYTHONIOENCODING: "utf-8",
+    PYTHONUTF8: "1",    ...extra,
+  };
+}
+
 export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   const item: ProcessingItemType =
     app.locals.processingStack.actions.getItem(id);
@@ -85,13 +124,14 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
   logs(item.id, "\r\n");
 
   const child = spawn(TIDDL_BINARY, args, {
-    env: {
-      ...process.env,
+    env: tiddlEnv({
       FORCE_COLOR: "1",
-      TERM: "xterm-256color",
+      // TERM=dumb disables rich's animated Live display (progress bar overwrites)
+      // while keeping plain text output for Downloaded/Exists lines
+      TERM: process.platform === "win32" ? "dumb" : "xterm-256color",
       LANG: "C.UTF-8",
       LC_ALL: "C.UTF-8",
-    },
+    }),
   });
 
   child.stdout?.setEncoding("utf8");
@@ -121,26 +161,16 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
       data.includes("Total downloads") ||
       data.includes("Downloaded")
     ) {
-      // Extract first line and clean it (remove ANSI hyperlinks and extra lines)
       const cleanedLine = extractFirstLineClean(data);
-
-      if (cleanedLine) {
-        // Console log important lines only (for Docker logs)
+      if (cleanedLine && cleanedLine.trim() !== "Downloaded" && cleanedLine.trim() !== "Exists") {
         console.log(cleanedLine);
-        // Replace last Total Progress with important line
-        logs(item.id, cleanedLine, { replaceLast: true, skipConsole: true });
-        // Re-display Total Progress below (will continue updating)
-        if (lastTotalProgress) {
-          logs(item.id, lastTotalProgress, { skipConsole: true });
-        }
+        logs(item.id, cleanedLine, { skipConsole: true });
       }
-
       return;
     }
 
     if (errorLines.length > 0) {
-      logs(item.id, errorLines.join("\n"), { replaceLast: true });
-      logs(item.id, " ");
+      logs(item.id, errorLines.join("\n"));
       return;
     }
 
@@ -212,7 +242,7 @@ export function tidalToken(req: Request, res: Response) {
   // User explicitly requested login, so proceed with authentication
   // (No need to check existing token - user wants to re-authenticate)
   const tiddlProcess = spawn(TIDDL_BINARY, ["auth", "login"], {
-    env: { ...process.env },
+    env: tiddlEnv(),
   });
 
   tiddlProcess.stdout.on("data", (data) => {
@@ -251,7 +281,7 @@ export function tidalToken(req: Request, res: Response) {
 export function deleteTiddlConfig() {
   try {
     const result = spawnSync(TIDDL_BINARY, ["auth", "logout", "--force"], {
-      env: { ...process.env },
+      env: tiddlEnv(),
       encoding: "utf-8",
     });
     if (result.status === 0) {
@@ -275,9 +305,7 @@ export async function refreshTidalToken(): Promise<void> {
   // Use async spawn and wait for completion
   return new Promise((resolve) => {
     const refreshProcess = spawn(TIDDL_BINARY, ["auth", "refresh"], {
-      env: {
-        ...process.env,
-      },
+      env: tiddlEnv(),
     });
 
     const stderrChunks: Buffer[] = [];
