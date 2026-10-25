@@ -36,6 +36,11 @@ function isRetriableApiError(line: string): boolean {
   return status !== undefined && RETRIABLE_API_STATUS.includes(Number(status));
 }
 
+/** Tidal answered 429: too many requests in a short window. */
+export function isRateLimitedLine(line: string): boolean {
+  return line.match(API_ERROR_STATUS)?.[1] === "429";
+}
+
 function isAnsiErrorLine(line: string): boolean {
   return (
     line.includes("[31mError:\x1B") &&

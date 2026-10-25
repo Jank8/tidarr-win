@@ -11,6 +11,20 @@ import { logs } from "../utils/logs";
 
 const MAX_RETRIES = 3;
 
+// Tidal answers 429 when too many requests are in flight (favorites with a few
+// hundred tracks hit this). Retrying right away makes it worse, so a rate
+// limited download waits longer on every attempt and gets more tries.
+const MAX_RATE_LIMIT_RETRIES = 5;
+const RATE_LIMIT_MAX_MS = 300_000;
+
+/** Base wait for a rate limited retry; TIDAL_RATE_LIMIT_WAIT is in seconds. */
+function rateLimitWaitMs(attempt: number): number {
+  const base =
+    (parseInt(process.env.TIDAL_RATE_LIMIT_WAIT ?? "", 10) || 60) * 1000;
+
+  return Math.min(base * 2 ** (attempt - 1), RATE_LIMIT_MAX_MS);
+}
+
 /**
  * Manages the parallel processing queue with 1 download slot and 1 post-processing slot
  */
@@ -117,6 +131,7 @@ export class QueueManager {
 
         if (this.shouldRetry(item)) {
           this.updateItemCallback(item);
+          if (item.rateLimited) await this.waitForRateLimit(item);
           this.startDownload(item);
           return;
         }
@@ -251,6 +266,26 @@ export class QueueManager {
   }
 
   /**
+   * Waits before retrying a rate limited download: 1 min, 2 min, 4 min, then
+   * capped at 5 min. The queue slot stays reserved for the item meanwhile, so no
+   * other download starts and piles more requests onto the limit.
+   */
+  private async waitForRateLimit(item: ProcessingItemType): Promise<void> {
+    const attempt = item.retryCount ?? 1;
+    const waitMs = rateLimitWaitMs(attempt);
+    const seconds = Math.round(waitMs / 1000);
+
+    logs(
+      item.id,
+      `⏳ [TIDAL] Rate limited (HTTP 429), waiting ${seconds}s before retry ${attempt}/${MAX_RATE_LIMIT_RETRIES}`,
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+
+    item.rateLimited = false;
+  }
+
+  /**
    * Checks if item should be retried, updates item state if yes
    */
   private shouldRetry(item: ProcessingItemType): boolean {
@@ -263,11 +298,12 @@ export class QueueManager {
     }
 
     const retryCount = item.retryCount ?? 0;
+    const maxRetries = item.rateLimited ? MAX_RATE_LIMIT_RETRIES : MAX_RETRIES;
 
-    if (retryCount >= MAX_RETRIES) {
+    if (retryCount >= maxRetries) {
       logs(
         item.id,
-        `❌ [RETRY] Max retries (${MAX_RETRIES}) reached. Download failed.`,
+        `❌ [RETRY] Max retries (${maxRetries}) reached. Download failed.`,
       );
       return false;
     }
@@ -279,7 +315,7 @@ export class QueueManager {
 
     logs(
       item.id,
-      `🔄 [RETRY] Retrying download (attempt ${item.retryCount}/${MAX_RETRIES})...`,
+      `🔄 [RETRY] Retrying download (attempt ${item.retryCount}/${maxRetries})...`,
     );
 
     return true;
