@@ -1,4 +1,4 @@
-param([switch]$Uninstall)
+﻿param([switch]$Uninstall, [switch]$Force)
 
 $ErrorActionPreference = "SilentlyContinue"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -129,12 +129,15 @@ function Remove-FromPath([string]$Entry) {
 function Invoke-Uninstall {
     Write-Host " Tidarr - Uninstall dependencies"
     Write-Host " ----------------------------------------"
-    Write-Host " This removes: Node.js, Python, tiddl + beets, ffmpeg, pnpm/tsx,"
-    Write-Host " rsgain, the tools folder and PATH entries added for them."
-    Write-Host " Your music files are NOT touched. userfiles\ is kept."
+    Write-Host " This removes: Node.js, Python 3.13+, tiddl + beets, ffmpeg,"
+    Write-Host " pnpm/tsx, rsgain, tools\, node_modules and the PATH entries added"
+    Write-Host " for them. Older Python versions and your music files are NOT"
+    Write-Host " touched. userfiles\ is kept."
     Write-Host " ----------------------------------------"
-    $confirm = Read-Host "Continue? (y/N)"
-    if ($confirm -notmatch "^y") { Write-Host "Cancelled."; return }
+    if (-not $Force) {
+        $confirm = Read-Host "Continue? (y/N)"
+        if ($confirm -notmatch "^y") { Write-Host "Cancelled."; return }
+    }
 
     Write-Host ""
     Write-Host "[1/6] Stopping Tidarr processes..."
@@ -147,8 +150,10 @@ function Invoke-Uninstall {
     }
     Write-Host "      Done."
 
-    Write-Host "[3/6] Removing downloaded tools..."
-    Remove-Item (Join-Path $root "tools") -Recurse -Force
+    Write-Host "[3/6] Removing downloaded tools and project dependencies..."
+    foreach ($path in @("tools", "node_modules", "api\node_modules", "app\node_modules", "api\dist", "app\dist")) {
+        Remove-Item (Join-Path $root $path) -Recurse -Force
+    }
     Write-Host "      Done."
 
     Write-Host "[4/6] Removing global npm tools (pnpm, tsx)..."
@@ -158,12 +163,23 @@ function Invoke-Uninstall {
     Write-Host "      Done."
 
     Write-Host "[5/6] Uninstalling winget packages..."
-    $pythonVersions = Get-PythonInstallations |
-        ForEach-Object { if ($_.Path -match "Python(\d)(\d+)") { "$($Matches[1]).$($Matches[2])" } } |
-        Where-Object { $_ } |
-        Select-Object -Unique
-    foreach ($version in $pythonVersions) {
-        & winget uninstall "Python.Python.$version" --silent --accept-source-agreements 2>$null | Out-Null
+    # Only Python 3.13+ can have been installed by the launcher (tiddl needs it);
+    # older interpreters on the machine belong to the user and are left alone.
+    $minimumPython = [version]"3.13"
+    $pythons = Get-PythonInstallations
+    $removablePython = $pythons | Where-Object {
+        $_.Version -and ([version]$_.Version -ge $minimumPython)
+    }
+    $keptPython = $pythons | Where-Object {
+        -not ($_.Version -and ([version]$_.Version -ge $minimumPython))
+    }
+    foreach ($python in $keptPython) {
+        Write-Host "      Keeping Python $($python.Version) ($($python.Path)) — older than the version Tidarr installs."
+    }
+    foreach ($python in $removablePython) {
+        if ($python.Path -match "Python(\d)(\d+)") {
+            & winget uninstall "Python.Python.$($Matches[1]).$($Matches[2])" --silent --accept-source-agreements 2>$null | Out-Null
+        }
     }
     & winget uninstall "Gyan.FFmpeg" --silent --accept-source-agreements 2>$null | Out-Null
     & winget uninstall "OpenJS.NodeJS.LTS" --silent --accept-source-agreements 2>$null | Out-Null
@@ -176,7 +192,7 @@ function Invoke-Uninstall {
         "C:\Program Files\nodejs",
         (Join-Path $env:LOCALAPPDATA "Programs\Python\Launcher")
     )
-    foreach ($python in Get-PythonInstallations) {
+    foreach ($python in $removablePython) {
         if ($python.Path -match "^(.*)\\python\.exe$") {
             $entries += $Matches[1]
             $entries += (Join-Path $Matches[1] "Scripts")
@@ -194,12 +210,16 @@ function Invoke-Uninstall {
 
 if ($Uninstall) {
     if (-not (Test-Admin)) {
-        Start-Process powershell -Verb RunAs -ArgumentList @(
-            "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall"
-        )
+        $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall")
+        if ($Force) { $arguments += "-Force" }
+        Start-Process powershell -Verb RunAs -ArgumentList $arguments
         exit
     }
     Invoke-Uninstall
+    if (-not $Force) {
+        Write-Host " Press Enter to close this window."
+        Read-Host | Out-Null
+    }
     exit
 }
 
@@ -217,9 +237,9 @@ $choice = Read-Host "Choose [1/2]"
 switch ($choice) {
     "1" {
         if (-not (Test-Admin)) {
-            Start-Process powershell -Verb RunAs -ArgumentList @(
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall"
-            )
+            $arguments = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"", "-Uninstall")
+            if ($Force) { $arguments += "-Force" }
+            Start-Process powershell -Verb RunAs -ArgumentList $arguments
             exit
         }
         Invoke-Uninstall
