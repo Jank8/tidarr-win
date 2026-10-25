@@ -19,10 +19,10 @@ export const DialogNoAPI = () => {
       <p>
         Connection tentative to Tidarr API, failed.
         <br />
-        Please check your logs
+        Check the console window opened by the launcher
       </p>
       <Paper elevation={0} sx={{ padding: "1rem" }}>
-        <code>$ docker-compose tidarr logs</code>
+        <code>start.cmd</code>
       </Paper>
       {apiError?.statusText && (
         <>

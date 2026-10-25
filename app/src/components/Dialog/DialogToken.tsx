@@ -94,10 +94,10 @@ export const DialogToken = () => {
       <p>
         ... or create Tidal token using CLI :{" "}
         <Link
-          href="https://github.com/cstaelen/tidarr?tab=readme-ov-file#tidal-authentication"
+          href="https://github.com/oskvr37/tiddl#authentication"
           target="_blank"
         >
-          Github
+          Tiddl documentation
         </Link>
       </p>
     </DialogHandler>

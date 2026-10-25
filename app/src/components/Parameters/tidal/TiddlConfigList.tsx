@@ -12,7 +12,7 @@ export default function TiddlConfigList() {
       <br />
       <Paper sx={{ my: 1, p: 1, overflow: "auto" }}>
         <pre style={{ margin: 0, fontSize: 14 }}>
-          /path/to/tidarr/volume/config/.tiddl/config.toml
+          userfiles\shared\.tiddl\config.toml
         </pre>
       </Paper>
       <h3>Template options</h3>

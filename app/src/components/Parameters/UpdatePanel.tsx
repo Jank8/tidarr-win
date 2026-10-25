@@ -17,9 +17,12 @@ export default function UpdatePanel() {
           <Paper sx={{ p: 2 }}>
             <strong>Update available: {releaseData?.name}</strong>
           </Paper>
-          <p>To update image stop container and run :</p>
+          <p>
+            To update, close this window, extract the new version over the
+            current folder and run :
+          </p>
           <Paper sx={{ p: 2 }}>
-            <code>docker compose pull tidarr</code>
+            <code>start.cmd</code>
           </Paper>
         </>
       ) : (

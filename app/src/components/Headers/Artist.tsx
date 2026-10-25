@@ -83,10 +83,10 @@ export default function ArtistHeader({
         "config.toml" file.
         <br />
         <Link
-          href="https://github.com/cstaelen/tidarr?tab=readme-ov-file#download-settings-optional"
+          href="https://github.com/oskvr37/tiddl/blob/main/docs/config.example.toml"
           target="_blank"
         >
-          More details on Github
+          More details in config.example.toml
         </Link>
         .
       </Alert>

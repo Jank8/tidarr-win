@@ -223,7 +223,7 @@ export default function AuthPanel() {
             }}
           >
             💡 Tip: The API key is automatically generated and stored in{" "}
-            <code>/shared/.tidarr-api-key</code>
+            <code>userfiles\shared\.tidarr-api-key</code>
           </Box>
         </>
       )}
