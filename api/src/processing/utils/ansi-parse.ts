@@ -26,18 +26,11 @@ export function stripAnsiCodes(text: string): string {
 }
 
 /**
- * Extract first line from tiddl output and clean it
- * Used for "Exists" and "Downloaded" status lines
+ * tiddl prints the item folder as a hyperlink after the title, e.g.
+ * `Downloaded Song C:\music\Artist\2020 - Album`. The hyperlink escapes are
+ * removed by `stripAnsiCodes`, this drops the leftover path column so the
+ * console shows just `Downloaded Song`.
  */
-export function extractFirstLineClean(text: string): string {
-  // Split by line breaks and get the first non-empty line
-  const firstLine = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => line.length > 0);
-
-  if (!firstLine) return "";
-
-  // Clean the first line from ANSI codes
-  return stripAnsiCodes(firstLine);
+export function stripItemPath(text: string): string {
+  return text.replace(/\s+[A-Za-z]:\\[^\r\n]*$/, "").trim();
 }

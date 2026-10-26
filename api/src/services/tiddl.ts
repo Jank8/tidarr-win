@@ -16,7 +16,10 @@ import {
   PROCESSING_PATH,
 } from "../../constants";
 import { get_tiddl_config } from "../helpers/get_tiddl_config";
-import { extractFirstLineClean } from "../processing/utils/ansi-parse";
+import {
+  stripAnsiCodes,
+  stripItemPath,
+} from "../processing/utils/ansi-parse";
 import { logs } from "../processing/utils/logs";
 import { ProcessingItemType, TiddlConfig } from "../types";
 
@@ -139,6 +142,9 @@ function tiddlEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     // Force Python/rich to use UTF-8 encoding on Windows (fixes UnicodeEncodeError with spinner chars)
     PYTHONIOENCODING: "utf-8",
     PYTHONUTF8: "1",
+    // rich wraps its output at the terminal width; without a TTY that is 80
+    // columns, which cuts item titles in half. Give it room instead.
+    COLUMNS: "1000",
     ...extra,
   };
 }
@@ -280,17 +286,18 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
 
   const stopHeartbeat = () => clearInterval(heartbeat);
 
-  child.stdout?.on("data", (data: string) => {
-    lastActivity = Date.now();
-    const lines = data?.split("\r");
-    const classifiedLines = lines.map(
-      (line) => [line, classifyTiddlLine(line)] as const,
-    );
-    const errorLines = classifiedLines
-      .filter(([, kind]) => kind !== null)
-      .map(([line]) => line);
+  // tiddl prints through rich, which wraps at the console width and appends the
+  // item folder after the title. Buffer the stream and handle one complete line
+  // at a time, so a title is never cut in half and paths stay out of the log.
+  let pendingLine = "";
 
-    if (errorLines.some((line) => isRateLimitedLine(line)) && !rateLimited) {
+  const handleOutputLine = (rawLine: string) => {
+    const line = stripAnsiCodes(rawLine).trim();
+    if (!line) return;
+
+    const kind = classifyTiddlLine(line);
+
+    if (isRateLimitedLine(line) && !rateLimited) {
       // Tidal is refusing requests: stop here instead of walking through the
       // remaining tracks. The queue manager waits (1, 2, 4, 5 min) and retries,
       // and tiddl resumes with the files that are already downloaded.
@@ -312,34 +319,14 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
       return;
     }
 
-    if (errorLines.length > 0) {
+    if (kind !== null) {
       hasProcessingError = true;
-      if (classifiedLines.some(([, kind]) => kind === "network")) {
-        hasNetworkError = true;
-      }
+      if (kind === "network") hasNetworkError = true;
     }
 
-    if (
-      data.includes("Exists") ||
-      data.includes("Total downloads") ||
-      data.includes("Downloaded")
-    ) {
-      const cleanedLine = extractFirstLineClean(data);
-      if (cleanedLine && cleanedLine.trim() !== "Downloaded" && cleanedLine.trim() !== "Exists") {
-        console.log(cleanedLine);
-        logs(item.id, cleanedLine, { skipConsole: true });
-      }
-      return;
-    }
-
-    if (errorLines.length > 0) {
-      logs(item.id, errorLines.join("\n"));
-      return;
-    }
-
-    if (data.includes("Total Progress")) {
+    if (line.includes("Total Progress")) {
       // Parse progress (e.g., "47/210") and update item (throttled)
-      const match = data.match(/(\d+)\/(\d+)/);
+      const match = line.match(/(\d+)\/(\d+)/);
       const now = Date.now();
       if (match && now - lastProgressUpdate > PROGRESS_UPDATE_THROTTLE_MS) {
         lastProgressUpdate = now;
@@ -350,8 +337,40 @@ export function tidalDL(id: string, app: Express, onFinish?: () => void) {
         app.locals.processingStack.actions.updateItem(item);
       }
 
-      logs(item.id, data, { replaceLast: true, skipConsole: true });
+      logs(item.id, line, { replaceLast: true, skipConsole: true });
+      return;
     }
+
+    if (
+      line.includes("Exists") ||
+      line.includes("Total downloads") ||
+      line.includes("Downloaded")
+    ) {
+      const cleaned = stripItemPath(line);
+      if (cleaned && cleaned !== "Downloaded" && cleaned !== "Exists") {
+        console.log(cleaned);
+        logs(item.id, cleaned, { skipConsole: true });
+      }
+      return;
+    }
+
+    if (kind !== null) {
+      logs(item.id, line);
+    }
+  };
+
+  child.stdout?.on("data", (data: string) => {
+    lastActivity = Date.now();
+    pendingLine += data;
+
+    // A single \r is rich rewriting the progress line; \n ends a regular line
+    const parts = pendingLine.split(/\r\n|\r|\n/);
+    pendingLine = parts.pop() ?? "";
+
+    for (const part of parts) handleOutputLine(part);
+
+    // Never keep an unbounded partial line
+    if (pendingLine.length > 20_000) pendingLine = "";
   });
 
   child.on("close", async (code) => {
